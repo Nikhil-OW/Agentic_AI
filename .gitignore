@@ -1,0 +1,23 @@
+# Python virtual environment folders
+.venv/
+venv/
+env/
+
+# Python caching structures
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local environment variables and keys
+.env
+
+# Streamlit runtime internal storage
+.streamlit/
+
+# Visual verification screenshot artifacts
+screenshots/
+
+# IDE configurations
+.idea/
+.vscode/

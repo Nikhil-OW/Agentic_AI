@@ -1,0 +1,8 @@
+# Core Agent Automation Driver Stack
+playwright==1.60.0
+google-genai==2.10.0
+faker==40.23.0
+
+# Infrastructure Configuration Layer
+python-dotenv==1.2.2
+streamlit==1.58.0
