@@ -1,0 +1,12 @@
+{
+  "environment": {
+    "default_url": "https://dev.urbuddi.com/login",
+    "timeout_ms": 5000,
+    "max_retry_steps": 15
+  },
+  "test_data": {
+    "username": "nikhil.pachipala@optimworks.com",
+    "password": "123456",
+    "notes": "All passwords and API tokens must be strictly injected from the .env layer."
+  }
+}
