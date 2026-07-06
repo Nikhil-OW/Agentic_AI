@@ -213,45 +213,52 @@ async def detect_validation_errors(page) -> Optional[str]:
         return None
 
 
-async def run_autonomous_navigator(config_registry, user_goal):
-    print(f"🚀 Launching Week 2 Dynamic Autonomous Form Engine...")
+async def run_autonomous_navigator(config_registry, target_url, user_goal, run_id="default_run", log_callback=None):
+    def log(msg):
+        formatted = f"[{run_id}] {msg}"
+        print(formatted)
+        if log_callback:
+            log_callback(msg)
+
+    log(f"🚀 Launching Parallel Dynamic Autonomous QA Engine for {run_id}...")
 
     if not config_registry.get("api_key"):
-        print("❌ CRITICAL ERROR: GEMINI_API_KEY not found in .env file! Exiting.")
+        log("❌ CRITICAL ERROR: GEMINI_API_KEY not found in .env file! Exiting.")
         sys.exit(1)
 
     ai_client = genai.Client(api_key=config_registry["api_key"])
     browser_engine = BrowserHelper()
     system_prompt = load_system_instructions()
 
-    target_url = config_registry["environment"]["target_url"]
     max_steps = config_registry["environment"].get("max_retry_steps", 8)
 
     # Instantiate today's fresh dynamic dataset
     dynamic_payload = generate_dynamic_test_data()
-    print("🎲 DYNAMIC TEST DATA ASSET INSTANTIATED:")
-    print(json.dumps(dynamic_payload, indent=2))
-    print("--------------------------------------------------")
+    log("🎲 DYNAMIC TEST DATA ASSET INSTANTIATED:")
+    log(json.dumps(dynamic_payload, indent=2))
+    log("--------------------------------------------------")
 
     # Initialize an execution memory matrix to maintain run context
     execution_history = []
+    import time
+    start_time = time.time()
 
     try:
         headless_mode = config_registry.get("environment", {}).get("headless", False)
         page = await browser_engine.initialize_maximized_page(headless=headless_mode)
-        print(f"🌐 Driving navigation to target application: {target_url}")
+        log(f"🌐 Driving navigation to target application: {target_url}")
         await page.goto(target_url)
         try:
             await page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
-            print("⏳ Network idle state wait timed out. Proceeding with DOM load state.")
+            log("⏳ Network idle state wait timed out. Proceeding with DOM load state.")
             await page.wait_for_load_state("load")
 
         is_final = False
         step = 0
 
         while not is_final and step < max_steps:
-            print(f"\n--- 🧠 Agent Dynamically Analyzing Step {step + 1} ---")
+            log(f"\n--- 🧠 Agent Dynamically Analyzing Step {step + 1} ---")
 
             # 1. Scrape deep layout parameters
             live_elements = await browser_engine.extract_interactive_elements()
@@ -259,12 +266,12 @@ async def run_autonomous_navigator(config_registry, user_goal):
             # Detect any validation error messages on the page
             validation_error = await detect_validation_errors(page)
             if validation_error:
-                print(f"⚠️ SELF-HEALING: Validation/rejection error detected on page: {validation_error}")
+                log(f"⚠️ SELF-HEALING: Validation/rejection error detected on page: {validation_error}")
                 # Dynamically regenerate alternative data parameters using Faker
-                print("🎲 SELF-HEALING: Re-generating alternative synthetic data parameters...")
+                log("🎲 SELF-HEALING: Re-generating alternative synthetic data parameters...")
                 dynamic_payload = generate_dynamic_test_data()
-                print("🎲 NEW DYNAMIC TEST DATA ASSET INSTANTIATED:")
-                print(json.dumps(dynamic_payload, indent=2))
+                log("🎲 NEW DYNAMIC TEST DATA ASSET INSTANTIATED:")
+                log(json.dumps(dynamic_payload, indent=2))
 
             # 2. Build context payload, injecting history tracking layer and error context if present
             error_injection = ""
@@ -297,7 +304,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
             )
 
             # 3. Process layout schema via the AI brain (with exponential backoff retries)
-            print("📡 Sending layout matrix and memory history to AI brain...")
+            log("📡 Sending layout matrix and memory history to AI brain...")
             response = None
             for attempt in range(5):
                 try:
@@ -312,31 +319,29 @@ async def run_autonomous_navigator(config_registry, user_goal):
                     )
                     break
                 except Exception as ex:
-                    print(f"⚠️ API Call failed (attempt {attempt + 1}/5): {ex}")
+                    log(f"⚠️ API Call failed (attempt {attempt + 1}/5): {ex}")
                     if attempt < 4:
                         if "429" in str(ex) or "RESOURCE_EXHAUSTED" in str(ex):
                             import re
                             match = re.search(r"retry in ([\d\.]+)s", str(ex))
                             sleep_time = float(match.group(1)) + 2.0 if match else 60.0
-                            print(f"⏳ Quota rate limit hit. Waiting {sleep_time:.2f} seconds before retrying...")
+                            log(f"⏳ Quota rate limit hit. Waiting {sleep_time:.2f} seconds before retrying...")
                         else:
                             sleep_time = 2 ** attempt
-                            print(f"🔄 Retrying in {sleep_time} seconds...")
+                            log(f"🔄 Retrying in {sleep_time} seconds...")
                         await asyncio.sleep(sleep_time)
                     else:
                         raise ex
 
             # --- SELF-HEALING PARSING LAYER ---
             raw_text = response.text.strip()
-            print(f"DEBUG RAW RESPONSE:\n{raw_text}\n")
-
             cleaned_text = extract_json_block(raw_text)
 
             try:
                 command = json.loads(cleaned_text)
             except json.JSONDecodeError:
-                print(f"⚠️ Raw Parsing Failed. Cleaned output was:\n{cleaned_text}")
-                print("🔄 Retrying current step due to formatting anomaly...")
+                log(f"⚠️ Raw Parsing Failed. Cleaned output was:\n{cleaned_text}")
+                log("🔄 Retrying current step due to formatting anomaly...")
                 step += 1
                 continue
 
@@ -348,7 +353,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                 command.get('thought_process') or 
                 "Executing interaction block..."
             )
-            print(f"🤖 AI Thought: {ai_thought}")
+            log(f"🤖 AI Thought: {ai_thought}")
 
             # Parse actions list (handle backward-compatibility fallback)
             actions_list = []
@@ -368,7 +373,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                     }]
 
             # 4. Execute the planned interactions sequentially
-            print(f"🛠️ Sequence Executor: Processing {len(actions_list)} planned action(s)...")
+            log(f"🛠️ Sequence Executor: Processing {len(actions_list)} planned action(s)...")
             for idx, act in enumerate(actions_list):
                 act_type = str(act.get('action', '')).lower().strip()
                 act_selector = act.get('selector') or act.get('target_selector') or act.get('css_selector')
@@ -376,7 +381,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                 act_select_val = act.get('value_to_select') or act.get('value') or act.get('text_to_type') or ''
                 act_wait = act.get('wait_time_ms')
 
-                print(f"  [{idx + 1}/{len(actions_list)}] Action: {act_type.upper()} on selector '{act_selector}'")
+                log(f"  [{idx + 1}/{len(actions_list)}] Action: {act_type.upper()} on selector '{act_selector}'")
 
                 try:
                     if act_type == 'type':
@@ -398,7 +403,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                         has_employee_form = await page.locator("input[name='firstName']").count() > 0
 
                         if is_submit_click and has_employee_form:
-                            print("🛡️ Form Submission Safety Guard: Ensuring all available form fields are filled...")
+                            log("🛡️ Form Submission Safety Guard: Ensuring all available form fields are filled...")
                             # 1. Locate all visible, enabled form fields
                             fields = await page.locator("input, select, textarea").all()
                             for field in fields:
@@ -468,7 +473,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                                         opt_text = await opt.inner_text()
                                         if opt_val and opt_val.strip() and opt_val.lower() != "select":
                                             await field.select_option(value=opt_val)
-                                            print(f"    ⚙️ Auto-filled select field '{name_attr or id_attr}' with: {opt_text}")
+                                            log(f"    ⚙️ Auto-filled select field '{name_attr or id_attr}' with: {opt_text}")
                                             await page.keyboard.press("Escape")
                                             # Click away to close select overlay
                                             try:
@@ -493,7 +498,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                                     await field.scroll_into_view_if_needed()
                                     await field.focus()
                                     await field.fill(value_to_fill)
-                                    print(f"    ✍️ Auto-filled field '{name_attr or id_attr}' with: {value_to_fill}")
+                                    log(f"    ✍️ Auto-filled field '{name_attr or id_attr}' with: {value_to_fill}")
                                     
                                     # Dismiss calendar overlays
                                     if "date" in target_key or "dob" in target_key or "joining" in target_key:
@@ -505,14 +510,14 @@ async def run_autonomous_navigator(config_registry, user_goal):
                                             pass
                                         await asyncio.sleep(0.5)
                             
-                            print("🛡️ Form Submission Safety Guard: All available fields successfully populated.")
+                            log("🛡️ Form Submission Safety Guard: All available fields successfully populated.")
 
                         await page.wait_for_selector(act_selector, state="visible", timeout=5000)
                         await page.click(act_selector)
                         await page.wait_for_load_state("load")
                         await asyncio.sleep(2)
                     elif act_type == 'select':
-                        print(f"    ⚙️ Selecting option '{act_select_val}'")
+                        log(f"    ⚙️ Selecting option '{act_select_val}'")
                         await page.wait_for_selector(act_selector, state="visible", timeout=5000)
                         element = page.locator(act_selector)
                         await element.scroll_into_view_if_needed()
@@ -521,7 +526,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
                         await asyncio.sleep(0.5)
                     elif act_type == 'wait':
                         sleep_s = float(act_wait or 1000) / 1000.0
-                        print(f"    ⏳ Sleeping for {sleep_s}s...")
+                        log(f"    ⏳ Sleeping for {sleep_s}s...")
                         await asyncio.sleep(sleep_s)
 
                     # Log this action into the running memory matrix
@@ -537,8 +542,8 @@ async def run_autonomous_navigator(config_registry, user_goal):
                         await asyncio.sleep(float(act_wait) / 1000.0)
 
                 except Exception as e_act:
-                    print(f"  ❌ Sequence Action failed: {e_act}")
-                    print("  🔄 Stopping sequence execution early to allow self-healing re-analysis.")
+                    log(f"  ❌ Sequence Action failed: {e_act}")
+                    log("  🔄 Stopping sequence execution early to allow self-healing re-analysis.")
                     break
 
             # Determine final status with variations supported
@@ -549,49 +554,65 @@ async def run_autonomous_navigator(config_registry, user_goal):
             await asyncio.sleep(2)
 
         # --- OUTSIDE WHILE LOOP: SCREENSHOT AND REPORTING ---
-        if is_final:
-            print("📸 Ultimate objective reached! Capturing final full-page screenshot...")
-            os.makedirs("screenshots", exist_ok=True)
+        timestamp_s = int(time.time())
+        os.makedirs("screenshots", exist_ok=True)
+        screenshot_path = f"screenshots/run_{run_id}_step_{step}_{timestamp_s}.png"
 
-            # Find next incrementing screenshot filename to avoid conflicts
-            counter = 1
-            while os.path.exists(f"screenshots/screenshot_{counter}.png"):
-                counter += 1
-            screenshot_path = f"screenshots/screenshot_{counter}.png"
-
+        try:
             await page.screenshot(path=screenshot_path, full_page=True)
-            print(f"✅ Visual execution proof saved cleanly to: {screenshot_path}")
+            log(f"✅ Visual execution proof saved cleanly to: {screenshot_path}")
+            
+            # Maintain a duplicate copy at run_{run_id}_final.png for UI reference
+            final_copy = f"screenshots/run_{run_id}_final.png"
+            import shutil
+            shutil.copy(screenshot_path, final_copy)
+        except Exception as e_ss:
+            log(f"⚠️ Failed to capture screenshot: {e_ss}")
+            screenshot_path = None
 
-            # Maintain a duplicate copy at screenshot_final.png for backward compatibility
-            try:
-                import shutil
-                shutil.copy(screenshot_path, "screenshots/screenshot_final.png")
-            except Exception:
-                pass
-            print("\n🎉 SUCCESS: Framework form-filling execution milestone reached cleanly!")
+        if is_final:
+            log(f"🎉 SUCCESS: Concurrency run '{run_id}' form-filling execution milestone reached cleanly!")
         else:
-            print("\n⚠️ WARNING: Framework execution completed without reaching the final milestone.")
+            log(f"⚠️ WARNING: Concurrency run '{run_id}' completed without reaching the final milestone.")
+
+        duration = round(time.time() - start_time, 2)
+        summary = {
+            "run_id": run_id,
+            "target_url": target_url,
+            "user_goal": user_goal,
+            "total_steps": step,
+            "status": "SUCCESS" if is_final else "FAILED/INCOMPLETE",
+            "is_final": is_final,
+            "duration_seconds": duration,
+            "screenshot_path": f"screenshots/run_{run_id}_final.png" if os.path.exists(f"screenshots/run_{run_id}_final.png") else None
+        }
 
         # Brief, professional QA executive summary
-        print("\n==================================================")
-        print("📊 QA EXECUTION EXECUTIVE SUMMARY")
-        print("==================================================")
-        print(f"Target Goal:           {user_goal}")
-        print(f"Total Steps Taken:     {step}")
-        print(f"Status:                {'SUCCESS' if is_final else 'MAX STEPS REACHED / INCOMPLETE'}")
-        print(f"Final State Reached:   {is_final}")
-        
-        screenshot_exists = os.path.exists("screenshots/screenshot_final.png")
-        print(f"Artifacts Generated:")
-        if screenshot_exists:
-            print("  - Screenshots Directory: screenshots/")
-            print("  - Final Proof Screenshot: screenshots/screenshot_final.png (SUCCESS)")
-        else:
-            print("  - Screenshots Directory: None (No screenshot captured)")
-        print("==================================================\n")
+        log("\n==================================================")
+        log("📊 QA EXECUTION EXECUTIVE SUMMARY")
+        log("==================================================")
+        log(f"Target Goal:           {user_goal}")
+        log(f"Total Steps Taken:     {step}")
+        log(f"Duration (seconds):    {duration}")
+        log(f"Status:                {summary['status']}")
+        log(f"Final State Reached:   {is_final}")
+        log("==================================================\n")
+
+        return summary
 
     except Exception as e:
-        print(f"❌ Execution Exception Encountered: {e}")
+        log(f"❌ Execution Exception Encountered: {e}")
+        duration = round(time.time() - start_time, 2)
+        return {
+            "run_id": run_id,
+            "target_url": target_url,
+            "user_goal": user_goal,
+            "total_steps": 0,
+            "status": f"ERROR: {e}",
+            "is_final": False,
+            "duration_seconds": duration,
+            "screenshot_path": None
+        }
     finally:
         await browser_engine.close_session()
 
@@ -599,6 +620,7 @@ async def run_autonomous_navigator(config_registry, user_goal):
 if __name__ == "__main__":
     # 1. Resolve centralized configurations (handles URL parsing from sys.argv)
     runtime_registry = load_unified_config()
+    target_url = runtime_registry["environment"]["target_url"]
 
     # 2. DYNAMIC TARGET GOAL LAYER (Reads directly from user prompt in terminal)
     if len(sys.argv) > 2:
@@ -611,4 +633,4 @@ if __name__ == "__main__":
     print("==================================================\n")
 
     # 3. Fire the autonomous loop
-    asyncio.run(run_autonomous_navigator(runtime_registry, TARGET_GOAL))
+    asyncio.run(run_autonomous_navigator(runtime_registry, target_url, TARGET_GOAL, "cli_run"))

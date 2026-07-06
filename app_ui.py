@@ -4,6 +4,7 @@ import os
 import glob
 import asyncio
 import streamlit as st
+import pandas as pd
 from navigator_agent import run_autonomous_navigator, load_unified_config
 
 # Page configuration
@@ -43,6 +44,13 @@ st.markdown("""
             font-size: 1.2rem;
             margin-bottom: 1rem;
         }
+        .card {
+            background-color: #f7f9fc;
+            padding: 1rem;
+            border-radius: 6px;
+            border-left: 5px solid #E86B24;
+            margin-bottom: 0.5rem;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -56,11 +64,8 @@ with st.sidebar:
     
     # Load default configs
     config = load_unified_config()
-    default_url = config.get("environment", {}).get("default_url", "https://dev.urbuddi.com/login")
     default_steps = config.get("environment", {}).get("max_retry_steps", 15)
     
-    # Render config inputs
-    target_url = st.text_input("Target URL Override", value=default_url)
     max_steps = st.number_input("Max Execution Steps", min_value=1, max_value=30, value=int(default_steps))
     
     browser_mode = st.selectbox("Browser Visibility", ["Headed (Visible Browser)", "Headless (Run in Background)"], index=0)
@@ -72,87 +77,188 @@ with st.sidebar:
     static_pass = st.text_input("Password", value=config.get("test_data", {}).get("password", "nafreen@123"), type="password")
 
     # Synchronize streamlit choices back to the config structure
-    config["environment"]["target_url"] = target_url
     config["environment"]["max_retry_steps"] = max_steps
     config["environment"]["headless"] = headless
     config["test_data"]["username"] = static_user
     config["test_data"]["password"] = static_pass
 
-# 2. Chat/Conversation State Initialization
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# 2. Parallel Target Execution Workspace
+if "targets" not in st.session_state:
+    st.session_state.targets = [
+        {
+            "name": "Optimworks Employee Add",
+            "url": "https://dev.urbuddi.com/login",
+            "goal": "Log into the system and completely add a new employee profile, ensuring no mandatory field is left blank."
+        },
+        {
+            "name": "Moodle Admin Verify",
+            "url": "https://sandbox.moodledemo.net/login/index.php",
+            "goal": "Log into the system using admin credentials and verify you can view the dashboard."
+        }
+    ]
 
-# Display conversation messages
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+st.markdown("### 🎯 Multi-Application Concurrency Targets")
+st.write("Configure individual target applications, URLs, and natural language objectives for parallel execution:")
 
-# Custom context manager to intercept stdout and stream directly to Streamlit
-class RealTimeStdoutRedirect:
-    def __init__(self, st_placeholder):
-        self.placeholder = st_placeholder
-        self.buffer = io.StringIO()
-
-    def write(self, data):
-        self.buffer.write(data)
-        # Render the console stream as a raw code block
-        self.placeholder.code(self.buffer.getvalue())
-
-    def flush(self):
-        pass
-
-# 3. Chat Input Trigger
-if user_prompt := st.chat_input("Ask the agent to perform a task (e.g. 'Log in and add a new employee profile')"):
-    # Display user objective in chat
-    with st.chat_message("user"):
-        st.write(user_prompt)
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
-
-    # Prepare status panel and terminal output streaming box
-    with st.chat_message("assistant"):
-        st.markdown("### 📡 Agent Telemetry Stream")
-        status_box = st.empty()
-        console_box = st.empty()
+updated_targets = []
+for idx, target in enumerate(st.session_state.targets):
+    with st.container():
+        st.markdown(f'<div class="card"><strong>App Target #{idx+1}: {target["name"]}</strong></div>', unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns([2, 3, 5, 1])
+        with col1:
+            name = st.text_input(f"App Target Name", value=target["name"], key=f"target_name_{idx}")
+        with col2:
+            url = st.text_input(f"Target URL Override", value=target["url"], key=f"target_url_{idx}")
+        with col3:
+            goal = st.text_input(f"Goal Objective", value=target["goal"], key=f"target_goal_{idx}")
+        with col4:
+            st.write("") # spacing
+            st.write("") # spacing
+            delete_clicked = st.button("🗑️ Delete", key=f"del_{idx}")
         
-        status_box.info("🚀 Launching Playwright browser driver...")
-        
-        # Capture stdout stream and execute the agent loop
-        old_stdout = sys.stdout
-        sys.stdout = RealTimeStdoutRedirect(console_box)
-        
-        try:
-            status_box.info("🧠 Driving perception-action loop... (Processing Step Actions)")
-            # Run the navigator loop asynchronously
-            asyncio.run(run_autonomous_navigator(config, user_prompt))
-            status_box.success("🎉 Execution finished cleanly!")
-        except Exception as e:
-            status_box.error(f"❌ Execution loop crashed: {e}")
-            print(f"\n❌ Loop crashed: {e}", file=sys.stderr)
-        finally:
-            # Restore stdout
-            sys.stdout = old_stdout
+        if not delete_clicked:
+            updated_targets.append({"name": name, "url": url, "goal": goal})
 
-        # 4. Post-run Artifact Scan & Screenshot Render
-        st.markdown("### 📸 Visual Execution Proof")
-        screenshot_pattern = "screenshots/*.png"
-        screenshots = glob.glob(screenshot_pattern)
+st.session_state.targets = updated_targets
+
+col_add, col_run = st.columns([1, 1])
+with col_add:
+    if st.button("➕ Add App Target"):
+        st.session_state.targets.append({
+            "name": f"Target App {len(st.session_state.targets) + 1}",
+            "url": "https://example.com",
+            "goal": "Verify the page contains elements."
+        })
+        st.rerun()
+
+with col_run:
+    run_parallel = st.button("🚀 Run Parallel Test Suite")
+
+if run_parallel:
+    if not st.session_state.targets:
+        st.warning("⚠️ No target applications configured. Please add at least one target.")
+    else:
+        st.markdown("---")
+        st.markdown("### 📡 Parallel Execution Telemetry Stream")
         
-        if screenshots:
-            # Fetch latest screenshot file dynamically by modtime
-            latest_screenshot = max(screenshots, key=os.path.getmtime)
-            st.image(
-                latest_screenshot, 
-                caption=f"Visual State proof: {os.path.basename(latest_screenshot)}",
-                use_container_width=True
-            )
-            st.success(f"Successfully loaded proof: {latest_screenshot}")
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"Task execution finished. Latest visual proof loaded: {os.path.basename(latest_screenshot)}"
-            })
-        else:
-            st.warning("⚠️ No execution proof screenshot found in screenshots/ folder.")
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "Task execution finished. No screenshot proof was captured."
-            })
+        # Allocate dynamic tabs for each execution
+        tab_names = [f"🖥️ {t['name']}" for t in st.session_state.targets]
+        tabs = st.tabs(tab_names)
+        
+        log_placeholders = []
+        status_placeholders = []
+        image_placeholders = []
+        
+        for idx, tab in enumerate(tabs):
+            with tab:
+                st.markdown(f"**Target URL**: {st.session_state.targets[idx]['url']}")
+                st.markdown(f"**Objective**: {st.session_state.targets[idx]['goal']}")
+                status_placeholder = st.empty()
+                log_placeholder = st.empty()
+                image_placeholder = st.empty()
+                
+                status_placeholders.append(status_placeholder)
+                log_placeholders.append(log_placeholder)
+                image_placeholders.append(image_placeholder)
+        
+        # Dynamic logger callbacks
+        log_buffers = [[] for _ in st.session_state.targets]
+        
+        def make_log_callback(index):
+            def callback(msg):
+                log_buffers[index].append(msg)
+                log_placeholders[index].code("\n".join(log_buffers[index]))
+            return callback
+        
+        async def execute_suite():
+            tasks = []
+            for idx, target in enumerate(st.session_state.targets):
+                run_id = target["name"].lower().replace(" ", "_")
+                status_placeholders[idx].info("⏳ Initializing isolated browser context...")
+                
+                log_cb = make_log_callback(idx)
+                
+                # Dynamic task definition
+                tasks.append(
+                    run_autonomous_navigator(
+                        config_registry=config,
+                        target_url=target["url"],
+                        user_goal=target["goal"],
+                        run_id=run_id,
+                        log_callback=log_cb
+                    )
+                )
+            
+            # Fire concurrent loop
+            status_summary = st.info("🧠 Driving concurrent perception-action loops...")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            status_summary.empty()
+            return results
+        
+        # Run async loop synchronously inside Streamlit
+        results = asyncio.run(execute_suite())
+        
+        # 3. Post-run Artifact and Screenshot renders
+        for idx, res in enumerate(results):
+            target_name = st.session_state.targets[idx]['name']
+            if isinstance(res, Exception):
+                status_placeholders[idx].error(f"❌ Execution crashed with exception: {res}")
+            elif res.get("is_final"):
+                status_placeholders[idx].success(f"🎉 Success: Objective completed in {res['total_steps']} steps!")
+                screenshot_path = res.get("screenshot_path")
+                if screenshot_path and os.path.exists(screenshot_path):
+                    image_placeholders[idx].image(
+                        screenshot_path,
+                        caption=f"Visual Proof: {target_name}",
+                        use_container_width=True
+                    )
+            else:
+                status_placeholders[idx].warning(f"⚠️ Warning: Session finished without meeting target state (Steps: {res.get('total_steps')})")
+                screenshot_path = res.get("screenshot_path")
+                if screenshot_path and os.path.exists(screenshot_path):
+                    image_placeholders[idx].image(
+                        screenshot_path,
+                        caption=f"Visual State proof: {target_name}",
+                        use_container_width=True
+                    )
+        
+        # 4. ENTERPRISE AUTOMATION STATUS REPORT
+        st.markdown("---")
+        st.markdown("### 📊 ENTERPRISE AUTOMATION STATUS REPORT")
+        
+        report_data = []
+        for idx, res in enumerate(results):
+            target = st.session_state.targets[idx]
+            if isinstance(res, Exception):
+                report_data.append({
+                    "Target App": target["name"],
+                    "URL": target["url"],
+                    "Status": "CRASHED/ERROR",
+                    "Steps Taken": 0,
+                    "Duration (s)": 0.0,
+                    "Final State": False,
+                    "Screenshot Path": "None"
+                })
+            else:
+                report_data.append({
+                    "Target App": target["name"],
+                    "URL": res.get("target_url"),
+                    "Status": res.get("status"),
+                    "Steps Taken": res.get("total_steps"),
+                    "Duration (s)": res.get("duration_seconds"),
+                    "Final State": res.get("is_final"),
+                    "Screenshot Path": res.get("screenshot_path") or "None"
+                })
+        
+        df = pd.DataFrame(report_data)
+        st.dataframe(df, use_container_width=True)
+        
+        # Consolidated Matrix console output printing for verification checks
+        print("\n" + "="*50)
+        print("📊 CONSOLIDATED ENTERPRISE QA METRICS MATRIX")
+        print("="*50)
+        print(df.to_markdown(index=False))
+        print("="*50 + "\n")
+        
+        st.markdown("#### Execution Summary Matrix (Markdown)")
+        st.code(df.to_markdown(index=False), language="markdown")
