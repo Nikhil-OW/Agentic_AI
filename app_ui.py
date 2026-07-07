@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 from navigator_agent import run_autonomous_navigator, load_unified_config
 
-# Page configuration
+# Page configuration for a wide developer workspace
 st.set_page_config(
     page_title="urBuddi MCP Autonomous QA Workspace",
     page_icon="🤖",
@@ -17,46 +17,79 @@ st.set_page_config(
 # Custom orange/blue theme styling for premium aesthetics
 st.markdown("""
     <style>
+        /* Modern font and background setups */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+        
         .main-header {
-            font-size: 2.2rem;
+            font-size: 2.3rem;
             font-weight: 700;
             color: #E86B24;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.2rem;
+            letter-spacing: -0.5px;
         }
         .subheader {
-            font-size: 1.1rem;
-            color: #1D3F75;
+            font-size: 1.05rem;
+            color: #5C6B73;
             margin-bottom: 2rem;
+            font-weight: 400;
         }
+        
+        /* Premium custom buttons */
         .stButton>button {
-            background-color: #E86B24 !important;
+            background: linear-gradient(135deg, #E86B24 0%, #C7561B 100%) !important;
             color: white !important;
-            border-radius: 4px;
-            font-weight: 600;
+            border: none !important;
+            border-radius: 6px !important;
+            padding: 0.6rem 1.4rem !important;
+            font-weight: 600 !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 6px rgba(232, 107, 36, 0.15);
         }
         .stButton>button:hover {
-            background-color: #c7561b !important;
-            border-color: #c7561b !important;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 12px rgba(232, 107, 36, 0.25);
+            background: linear-gradient(135deg, #C7561B 0%, #A34212 100%) !important;
         }
+        
+        /* Secondary action buttons */
+        div[data-testid="column"] button[key*="del"] {
+            background: #FAD2E1 !important;
+            color: #9B2226 !important;
+            padding: 0.3rem 0.8rem !important;
+            font-size: 0.9rem !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="column"] button[key*="del"]:hover {
+            background: #F5B3CB !important;
+            transform: none !important;
+        }
+        
         .sidebar-header {
             font-weight: 700;
             color: #1D3F75;
             font-size: 1.2rem;
             margin-bottom: 1rem;
+            letter-spacing: -0.2px;
         }
-        .card {
-            background-color: #f7f9fc;
-            padding: 1rem;
-            border-radius: 6px;
-            border-left: 5px solid #E86B24;
-            margin-bottom: 0.5rem;
+        
+        /* Section styling */
+        .table-header {
+            font-weight: 600;
+            color: #1D3F75;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #E2E8F0;
+            margin-bottom: 0.8rem;
         }
     </style>
 """, unsafe_allow_html=True)
 
 # App titles
 st.markdown('<div class="main-header">🤖 urBuddi QA Host Workspace</div>', unsafe_allow_html=True)
-st.markdown('<div class="subheader">MCP-Style Conversational QA Client with Telemetry Logging</div>', unsafe_allow_html=True)
+st.markdown('<div class="subheader">MCP-Style Conversational QA Concurrency Client with Telemetry Logging</div>', unsafe_allow_html=True)
 
 # 1. Sidebar Config Override Settings
 with st.sidebar:
@@ -98,29 +131,37 @@ if "targets" not in st.session_state:
     ]
 
 st.markdown("### 🎯 Multi-Application Concurrency Targets")
-st.write("Configure individual target applications, URLs, and natural language objectives for parallel execution:")
+st.write("Manage and assign natural language objetivos across multiple application environments concurrently:")
+
+# Tabular Spreadsheet Header Row for clean targets input grid
+col_h1, col_h2, col_h3, col_h4 = st.columns([2, 3, 5, 1])
+with col_h1:
+    st.markdown('<div class="table-header">App Target Name</div>', unsafe_allow_html=True)
+with col_h2:
+    st.markdown('<div class="table-header">Target URL Override</div>', unsafe_allow_html=True)
+with col_h3:
+    st.markdown('<div class="table-header">Goal Objective / User Intent</div>', unsafe_allow_html=True)
+with col_h4:
+    st.markdown('<div class="table-header">Action</div>', unsafe_allow_html=True)
 
 updated_targets = []
 for idx, target in enumerate(st.session_state.targets):
-    with st.container():
-        st.markdown(f'<div class="card"><strong>App Target #{idx+1}: {target["name"]}</strong></div>', unsafe_allow_html=True)
-        col1, col2, col3, col4 = st.columns([2, 3, 5, 1])
-        with col1:
-            name = st.text_input(f"App Target Name", value=target["name"], key=f"target_name_{idx}")
-        with col2:
-            url = st.text_input(f"Target URL Override", value=target["url"], key=f"target_url_{idx}")
-        with col3:
-            goal = st.text_input(f"Goal Objective", value=target["goal"], key=f"target_goal_{idx}")
-        with col4:
-            st.write("") # spacing
-            st.write("") # spacing
-            delete_clicked = st.button("🗑️ Delete", key=f"del_{idx}")
-        
-        if not delete_clicked:
-            updated_targets.append({"name": name, "url": url, "goal": goal})
+    col1, col2, col3, col4 = st.columns([2, 3, 5, 1])
+    with col1:
+        name = st.text_input("App Target Name", value=target["name"], key=f"target_name_{idx}", label_visibility="collapsed")
+    with col2:
+        url = st.text_input("Target URL Override", value=target["url"], key=f"target_url_{idx}", label_visibility="collapsed")
+    with col3:
+        goal = st.text_input("Goal Objective", value=target["goal"], key=f"target_goal_{idx}", label_visibility="collapsed")
+    with col4:
+        delete_clicked = st.button("🗑️ Delete", key=f"del_{idx}")
+    
+    if not delete_clicked:
+        updated_targets.append({"name": name, "url": url, "goal": goal})
 
 st.session_state.targets = updated_targets
 
+# Action bar below the table grid
 col_add, col_run = st.columns([1, 1])
 with col_add:
     if st.button("➕ Add App Target"):
@@ -139,7 +180,7 @@ if run_parallel:
         st.warning("⚠️ No target applications configured. Please add at least one target.")
     else:
         st.markdown("---")
-        st.markdown("### 📡 Parallel Execution Telemetry Stream")
+        st.markdown("### 📡 Parallel Execution Telemetry Dashboard")
         
         # Allocate dynamic tabs for each execution
         tab_names = [f"🖥️ {t['name']}" for t in st.session_state.targets]
@@ -151,11 +192,16 @@ if run_parallel:
         
         for idx, tab in enumerate(tabs):
             with tab:
-                st.markdown(f"**Target URL**: {st.session_state.targets[idx]['url']}")
-                st.markdown(f"**Objective**: {st.session_state.targets[idx]['goal']}")
-                status_placeholder = st.empty()
-                log_placeholder = st.empty()
-                image_placeholder = st.empty()
+                st.markdown(f"**Target URL**: `{st.session_state.targets[idx]['url']}` | **Objective**: *\"{st.session_state.targets[idx]['goal']}\"*")
+                
+                # Split screen layout: Left for Status/Visual, Right for logs
+                col_left, col_right = st.columns([4, 6])
+                with col_left:
+                    status_placeholder = st.empty()
+                    image_placeholder = st.empty()
+                with col_right:
+                    st.markdown("💻 **Execution Output Console**")
+                    log_placeholder = st.empty()
                 
                 status_placeholders.append(status_placeholder)
                 log_placeholders.append(log_placeholder)
@@ -174,7 +220,7 @@ if run_parallel:
             tasks = []
             for idx, target in enumerate(st.session_state.targets):
                 run_id = target["name"].lower().replace(" ", "_")
-                status_placeholders[idx].info("⏳ Initializing isolated browser context...")
+                status_placeholders[idx].info("⏳ Initializing browser...")
                 
                 log_cb = make_log_callback(idx)
                 
