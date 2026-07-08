@@ -89,7 +89,7 @@ st.markdown("""
 
 # App titles
 st.markdown('<div class="main-header">🤖 MCP QA Host Workspace</div>', unsafe_allow_html=True)
-st.markdown('<div class="subheader">MCP-Style Conversational QA Concurrency Client with Telemetry Logging</div>', unsafe_allow_html=True)
+st.markdown('<div class="subheader">Parallel AI Test Automation Suite with Telemetry Logging</div>', unsafe_allow_html=True)
 
 # 1. Sidebar Config Override Settings
 with st.sidebar:
