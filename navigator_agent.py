@@ -220,7 +220,7 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
         if log_callback:
             log_callback(msg)
 
-    log(f"🚀 Launching Parallel Dynamic Autonomous QA Engine for {run_id}...")
+    log(f"🚀 Launching Dynamic Autonomous QA Engine for {run_id}...")
 
     if not config_registry.get("api_key"):
         log("❌ CRITICAL ERROR: GEMINI_API_KEY not found in .env file! Exiting.")
@@ -589,7 +589,7 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
         # Brief, professional QA executive summary
         log("\n==================================================")
-        log("📊 QA EXECUTION EXECUTIVE SUMMARY")
+        log("📊 TEST SUITE EXECUTION SUMMARY")
         log("==================================================")
         log(f"Target Goal:           {user_goal}")
         log(f"Total Steps Taken:     {step}")

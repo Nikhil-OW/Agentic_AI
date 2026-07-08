@@ -173,14 +173,14 @@ with col_add:
         st.rerun()
 
 with col_run:
-    run_parallel = st.button("🚀 Run Parallel Test Suite")
+    run_parallel = st.button("🚀 Run Test Suite")
 
 if run_parallel:
     if not st.session_state.targets:
         st.warning("⚠️ No target applications configured. Please add at least one target.")
     else:
         st.markdown("---")
-        st.markdown("### 📡 Parallel Execution Telemetry Dashboard")
+        st.markdown("### 📡 Test Suite Telemetry Dashboard")
         
         # Allocate dynamic tabs for each execution
         tab_names = [f"🖥️ {t['name']}" for t in st.session_state.targets]
@@ -270,7 +270,7 @@ if run_parallel:
         
         # 4. ENTERPRISE AUTOMATION STATUS REPORT
         st.markdown("---")
-        st.markdown("### 📊 ENTERPRISE AUTOMATION STATUS REPORT")
+        st.markdown("### 📊 TEST SUITE EXECUTION SUMMARY")
         
         report_data = []
         for idx, res in enumerate(results):
@@ -301,7 +301,7 @@ if run_parallel:
         
         # Consolidated Matrix console output printing for verification checks
         print("\n" + "="*50)
-        print("📊 CONSOLIDATED ENTERPRISE QA METRICS MATRIX")
+        print("📊 TEST SUITE EXECUTION SUMMARY")
         print("="*50)
         print(df.to_markdown(index=False))
         print("="*50 + "\n")

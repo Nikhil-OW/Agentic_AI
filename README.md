@@ -82,11 +82,11 @@ streamlit run app_ui.py
 ```
 This launches the host dashboard on `http://localhost:8501`.
 
-### 2. Run Parallel Objectives
+### 2. Run Test Suite Objectives
 1. Open the dashboard in your web browser.
 2. Configure targets dynamically in the main area (click **➕ Add App Target** to add as many targets as required, specify their name, target URL, and individual goal objectives).
 3. Select the desired **Browser Visibility** in the sidebar (Headed or Headless).
-4. Click **🚀 Run Parallel Test Suite**.
+4. Click **🚀 Run Test Suite**.
 5. Live logging is rendered concurrently. Streamlit dynamically maps isolated tabs for each application execution showing status blocks, distinct real-time console streams, and visual screenshots upon completion.
 
 ---
