@@ -21,8 +21,9 @@ class BrowserHelper:
                 "--start-maximized",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process"  # Prevents async rendering isolation
+                "--disable-features=IsolateOrigins,site-per-process"
             ]
         )
         self.context = await self.browser.new_context(no_viewport=True)  # Allows --start-maximized to work natively
