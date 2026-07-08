@@ -16,17 +16,18 @@ class BrowserHelper:
         """Launches a fully maximized browser instance across Windows setups."""
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=headless,  # Dynamically bound to Streamlit / CLI configuration
+            headless=False,  # Explicitly overrides any background defaults
             args=[
                 "--start-maximized",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process"  # Prevents async rendering isolation
             ]
         )
-        self.context = await self.browser.new_context(no_viewport=True)
+        self.context = await self.browser.new_context(no_viewport=True)  # Allows --start-maximized to work natively
         self.page = await self.context.new_page()
-        await self.page.bring_to_front()  # Force browser window to the front
+        await self.page.bring_to_front()  # Force the OS window manager to bring the browser to focus
         # Auto-accept dialogs (such as 'Product added' alerts on demoblaze) to prevent blocking the agent
         self.page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
         return self.page
