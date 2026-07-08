@@ -1,10 +1,10 @@
-# MCP Autonomous QA Automation Framework
-An enterprise-grade, self-healing web agent and MCP-style host loop for automated parallel application testing.
+# Parallel AI Automation Suite
+An enterprise-grade, self-healing web agent and autonomous runner loop for automated parallel application testing.
 
 ---
 
 ## 📋 Project Overview
-The **MCP Autonomous QA Automation Framework** is an advanced, perception-action loop driven web automation driver. It exposes specialized web-driving capabilities—combining Playwright, a custom form-aware visual DOM layout scraper, and a Faker synthetic data factory—to Gemini LLM reasoning engines. The framework functions as a Model Context Protocol (MCP) host, allowing high-level natural language objectives to drive complete, end-to-end user workflows in parallel across multiple isolated application targets.
+The **Parallel AI Automation Suite** is an advanced, perception-action loop driven web automation driver. It exposes specialized web-driving capabilities—combining Playwright, a custom form-aware visual DOM layout scraper, and a Faker synthetic data factory—to Gemini LLM reasoning engines. The framework functions as an autonomous automation driver, allowing high-level natural language objectives to drive complete, end-to-end user workflows in parallel across multiple isolated application targets.
 
 ---
 

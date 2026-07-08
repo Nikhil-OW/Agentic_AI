@@ -618,19 +618,55 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
 
 if __name__ == "__main__":
-    # 1. Resolve centralized configurations (handles URL parsing from sys.argv)
-    runtime_registry = load_unified_config()
-    target_url = runtime_registry["environment"]["target_url"]
+    import argparse
+    parser = argparse.ArgumentParser(description="Parallel AI Automation CLI Runner")
+    parser.add_argument("--url", help="Target URL override")
+    parser.add_argument("--goal", help="Natural language objective")
+    parser.add_argument("--headless", action="store_true", default=None, help="Force headless execution")
+    parser.add_argument("--headed", action="store_true", default=None, help="Force headed execution")
+    args, unknown = parser.parse_known_args()
 
-    # 2. DYNAMIC TARGET GOAL LAYER (Reads directly from user prompt in terminal)
-    if len(sys.argv) > 2:
-        TARGET_GOAL = sys.argv[2]
+    # 1. Resolve centralized configurations
+    runtime_registry = load_unified_config()
+    
+    # Resolve target URL
+    target_url = args.url or runtime_registry["environment"]["target_url"]
+    
+    # Resolve Goal Objective
+    goal = args.goal
+    if not goal:
+        # Fallback to positional args if present, else default
+        remaining_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+        if remaining_args:
+            goal = " ".join(remaining_args)
+        else:
+            goal = "Log into the system and successfully add a new employee record using the dynamic data pool."
+
+    # Resolve headless visibility defaults
+    if args.headless:
+        runtime_registry["environment"]["headless"] = True
+    elif args.headed:
+        runtime_registry["environment"]["headless"] = False
     else:
-        TARGET_GOAL = "Log into the system and successfully add a new employee record using the dynamic data pool."
+        # Auto-default to headless in CI/CD pipelines
+        if os.getenv("CI") or os.getenv("GITHUB_ACTIONS") or os.getenv("JENKINS_URL") or os.getenv("GITLAB_CI"):
+            runtime_registry["environment"]["headless"] = True
 
     print("\n==================================================")
-    print(f"🎯 ACTIVE OBJECTIVE: {TARGET_GOAL}")
+    print(f"🎯 ACTIVE OBJECTIVE: {goal}")
+    print(f"🌐 TARGET URL:      {target_url}")
+    print(f"🖥️ BROWSER MODE:     {'HEADLESS' if runtime_registry['environment'].get('headless') else 'HEADED'}")
     print("==================================================\n")
 
-    # 3. Fire the autonomous loop
-    asyncio.run(run_autonomous_navigator(runtime_registry, target_url, TARGET_GOAL, "cli_run"))
+    # 2. Fire the autonomous loop and return standard shell exit codes
+    try:
+        summary = asyncio.run(run_autonomous_navigator(runtime_registry, target_url, goal, "cli_run"))
+        if summary.get("is_final") or summary.get("status") == "SUCCESS":
+            print("\n🎉 CLI RUN COMPLETED SUCCESSFULLY!")
+            sys.exit(0)
+        else:
+            print("\n❌ CLI RUN failed to reach ultimate objective.")
+            sys.exit(1)
+    except Exception as cli_ex:
+        print(f"\n❌ CLI RUN crashed with exception: {cli_ex}")
+        sys.exit(1)

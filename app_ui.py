@@ -9,7 +9,7 @@ from navigator_agent import run_autonomous_navigator, load_unified_config
 
 # Page configuration for a wide developer workspace
 st.set_page_config(
-    page_title="MCP Autonomous QA Workspace",
+    page_title="Parallel AI Automation Workspace",
     page_icon="🤖",
     layout="wide"
 )
@@ -88,7 +88,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # App titles
-st.markdown('<div class="main-header">🤖 MCP QA Host Workspace</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🤖 Parallel AI Automation Workspace</div>', unsafe_allow_html=True)
 st.markdown('<div class="subheader">Parallel AI Test Automation Suite with Telemetry Logging</div>', unsafe_allow_html=True)
 
 # 1. Sidebar Config Override Settings
