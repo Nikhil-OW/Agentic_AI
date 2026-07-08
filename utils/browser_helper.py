@@ -16,11 +16,12 @@ class BrowserHelper:
         """Launches a fully maximized browser instance across Windows setups."""
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=False,  # Enforce visual display (headed browser mode)
+            headless=headless,  # Dynamically bound to Streamlit / CLI configuration
             args=[
                 "--start-maximized",
                 "--no-sandbox",
-                "--disable-gpu"
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled"
             ]
         )
         self.context = await self.browser.new_context(no_viewport=True)
