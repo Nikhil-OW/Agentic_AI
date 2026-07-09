@@ -115,10 +115,9 @@ class BrowserHelper:
                 // Determine dynamic selectors
                 let selector = el.id ? `#${el.id}` : el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : '';
                 if (!selector) {
-                    if (el.tagName === 'BUTTON' && el.innerText.trim()) {
-                        selector = `button:text-is("${el.innerText.trim()}")`;
-                    } else if (el.tagName === 'A' && el.innerText.trim()) {
-                        selector = `a:text-is("${el.innerText.trim()}")`;
+                    const text = el.innerText ? el.innerText.trim() : '';
+                    if (text && text.length > 0 && text.length < 60 && !text.includes('\n') && !text.includes('"')) {
+                        selector = `${el.tagName.toLowerCase()}:text-is("${text}")`;
                     } else if (el.type === 'submit' || el.className) {
                         const classClean = Array.from(el.classList).join('.');
                         selector = classClean ? `${el.tagName.toLowerCase()}.${classClean}` : el.tagName.toLowerCase();
