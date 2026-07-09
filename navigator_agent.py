@@ -247,12 +247,11 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
         headless_mode = config_registry.get("environment", {}).get("headless", False)
         page = await browser_engine.initialize_maximized_page(headless=headless_mode)
         log(f"🌐 Driving navigation to target application: {target_url}")
-        await page.goto(target_url)
         try:
-            await page.wait_for_load_state("networkidle", timeout=8000)
-        except Exception:
-            log("⏳ Network idle state wait timed out. Proceeding with DOM load state.")
-            await page.wait_for_load_state("load")
+            # Ensure this is actively hit right after the logs initialize with network settle threshold
+            await page.goto(target_url, wait_until="networkidle", timeout=15000)
+        except Exception as e_nav:
+            log(f"⚠️ Navigation settle threshold bypassed: {e_nav}. Proceeding with current page state.")
 
         is_final = False
         step = 0

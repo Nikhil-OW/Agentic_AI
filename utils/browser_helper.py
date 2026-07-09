@@ -37,6 +37,7 @@ class BrowserHelper:
         """
         Scrapes the viewport DOM, capturing deep form attributes, accessibility labels,
         and element classification types for highly accurate form-filling capabilities.
+        Trims non-essential tags (SVG, script, style, meta, iframe) to reduce token weight.
         """
         if not self.page:
             return []
@@ -44,6 +45,10 @@ class BrowserHelper:
         elements = await self.page.evaluate("""() => {
             const isVisible = (el) => {
                 if (!el) return false;
+                // Strip out scripts, styles, SVGs, meta, and hidden iframe environments
+                if (el.closest('script, style, svg, meta, iframe')) {
+                    return false;
+                }
                 const style = window.getComputedStyle(el);
                 if (style.display === 'none' || style.visibility === 'hidden') {
                     return false;
@@ -69,11 +74,45 @@ class BrowserHelper:
                 return true;
             };
 
-            // Target all native form fields, selectors, and interactive custom roles
-            const targetQuery = 'input, button, select, textarea, a, [role="button"], [role="checkbox"], [role="radio"]';
+            // Scrape form controls, links, headings, alerts and errors
+            const targetQuery = 'input, button, select, textarea, a, [role="button"], [role="checkbox"], [role="radio"], h1, h2, h3, .alert, .error';
+            const nodes = Array.from(document.querySelectorAll(targetQuery)).filter(isVisible);
 
-            return Array.from(document.querySelectorAll(targetQuery)).filter(isVisible).map(el => {
-                // Determine accurate unique selector targeting rules
+            return nodes.map(el => {
+                const tag = el.tagName.toLowerCase();
+                
+                // Classify headings and alert boxes as semantic text markers
+                const isHeading = ['h1', 'h2', 'h3'].includes(tag);
+                const isAlertOrError = el.classList.contains('alert') || el.classList.contains('error') || 
+                                      (window.getComputedStyle(el).color === 'rgb(220, 53, 69)') ||
+                                      (el.innerText && (el.innerText.toLowerCase().includes('error') || el.innerText.toLowerCase().includes('invalid') || el.innerText.toLowerCase().includes('unable to')));
+                
+                if (isHeading || isAlertOrError) {
+                    return {
+                        tag: el.tagName,
+                        type: 'text_marker',
+                        text: el.innerText ? el.innerText.trim() : null
+                    };
+                }
+
+                // Associate labeling texts to standard input elements
+                let labelText = '';
+                if (el.id) {
+                    const lbl = document.querySelector(`label[for="${el.id}"]`);
+                    if (lbl) labelText = lbl.innerText.trim();
+                }
+                if (!labelText && el.parentElement) {
+                    let parent = el.parentElement;
+                    while (parent && parent.tagName !== 'BODY') {
+                        if (parent.tagName === 'LABEL') {
+                            labelText = parent.innerText.trim();
+                            break;
+                        }
+                        parent = parent.parentElement;
+                    }
+                }
+
+                // Determine dynamic selectors
                 let selector = el.id ? `#${el.id}` : el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : '';
                 if (!selector) {
                     if ((el.tagName === 'A' || el.tagName === 'BUTTON') && el.innerText.trim()) {
@@ -86,7 +125,6 @@ class BrowserHelper:
                     }
                 }
 
-                // Extract possible dropdown option structures if the element is a SELECT node
                 let optionsList = [];
                 if (el.tagName === 'SELECT') {
                     optionsList = Array.from(el.options).map(opt => ({
@@ -99,6 +137,7 @@ class BrowserHelper:
                     tag: el.tagName,
                     id: el.id || null,
                     name: el.name || null,
+                    label: labelText || null,
                     type: el.type || el.getAttribute('role') || 'text',
                     placeholder: el.placeholder || el.getAttribute('aria-label') || null,
                     text: el.innerText ? el.innerText.trim() : (el.value ? el.value.trim() : null),
@@ -106,7 +145,12 @@ class BrowserHelper:
                     disabled: el.disabled || false,
                     computed_selector: selector
                 };
-            }).filter(el => el.id || el.text || el.placeholder || el.name || el.options);
+            }).filter(item => {
+                if (item.type === 'text_marker') {
+                    return item.text && item.text.length > 0;
+                }
+                return item.id || item.text || item.placeholder || item.name || item.options || item.label;
+            });
         }""")
         return elements
 
