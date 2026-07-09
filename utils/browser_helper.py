@@ -115,14 +115,22 @@ class BrowserHelper:
                 // Determine dynamic selectors
                 let selector = el.id ? `#${el.id}` : el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : '';
                 if (!selector) {
-                    if ((el.tagName === 'A' || el.tagName === 'BUTTON') && el.innerText.trim()) {
-                        selector = `text="${el.innerText.trim()}"`;
+                    if (el.tagName === 'BUTTON' && el.innerText.trim()) {
+                        selector = `button:text("${el.innerText.trim()}")`;
+                    } else if (el.tagName === 'A' && el.innerText.trim()) {
+                        selector = `a:text("${el.innerText.trim()}")`;
                     } else if (el.type === 'submit' || el.className) {
                         const classClean = Array.from(el.classList).join('.');
                         selector = classClean ? `${el.tagName.toLowerCase()}.${classClean}` : el.tagName.toLowerCase();
                     } else {
                         selector = el.tagName.toLowerCase();
                     }
+                }
+
+                // Prepend modal container scope if inside a dynamic overlay to prevent pointer interception
+                const modalParent = el.closest('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
+                if (modalParent && selector && !selector.startsWith('#')) {
+                    selector = `.modal-container ${selector}`;
                 }
 
                 let optionsList = [];
