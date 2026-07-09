@@ -2,7 +2,12 @@ import asyncio
 import os
 import json
 import sys
-from navigator_agent import run_autonomous_navigator, load_unified_config
+# Append the project root to sys.path to resolve core and utils modules
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from core.agent import run_autonomous_navigator, load_unified_config
 
 async def main():
     config = load_unified_config()

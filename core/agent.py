@@ -3,6 +3,11 @@ import json
 import asyncio
 import os
 
+# Append the project root to sys.path to resolve core and utils modules
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 # Reconfigure stdout/stderr to UTF-8 for safe emoji and Unicode rendering on Windows if supported
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -47,14 +52,15 @@ fake = Faker()
 
 def load_unified_config():
     """Consolidates the standardized config schema and maps the secure API layer."""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, "config.json")
+    # Move up one level from core/ to Agentic_AI/ root, then look inside config/
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    config_path = os.path.join(base_dir, "config", "config.json")
 
     try:
         with open(config_path, "r") as f:
             runtime_config = json.load(f)
     except FileNotFoundError:
-        print("❌ CRITICAL: Standardized config.json is missing from the project root!")
+        print("❌ CRITICAL: Standardized config.json is missing from the config/ directory!")
         sys.exit(1)
 
     # Resolve Target URL (CLI argument takes absolute priority over default_url if valid URL)
@@ -75,9 +81,9 @@ def load_unified_config():
 
 
 def load_system_instructions():
-    """Reads the core prompt rules from the root text file."""
+    """Reads the core prompt rules from the subfolder text file."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    instructions_path = os.path.join(base_dir, "system_instructions.txt")
+    instructions_path = os.path.join(base_dir, "prompts", "system_instructions.txt")
     try:
         with open(instructions_path, "r") as f:
             return f.read()

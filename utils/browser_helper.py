@@ -129,7 +129,7 @@ class BrowserHelper:
                 // Prepend modal container scope if inside a dynamic overlay to prevent pointer interception
                 const modalParent = el.closest('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
                 if (modalParent && selector && !selector.startsWith('#')) {
-                    selector = `.modal-container ${selector}`;
+                    selector = `.modal-container >> ${selector}`;
                 }
 
                 let optionsList = [];
