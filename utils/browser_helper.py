@@ -74,8 +74,8 @@ class BrowserHelper:
                 return true;
             };
 
-            // Scrape form controls, links, headings, alerts and errors
-            const targetQuery = 'input, button, select, textarea, a, [role="button"], [role="checkbox"], [role="radio"], h1, h2, h3, .alert, .error';
+            // Scrape form controls, links, menu items, headings, alerts and errors
+            const targetQuery = 'input, button, select, textarea, a, li, [role="button"], [role="checkbox"], [role="radio"], h1, h2, h3, .alert, .error, [class*="nav-item"], [class*="menu-item"]';
             const nodes = Array.from(document.querySelectorAll(targetQuery)).filter(isVisible);
 
             return nodes.map(el => {
