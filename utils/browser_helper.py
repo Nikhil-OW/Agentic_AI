@@ -117,7 +117,7 @@ class BrowserHelper:
                 if (!selector) {
                     const text = el.innerText ? el.innerText.trim() : '';
                     if (text && text.length > 0 && text.length < 60 && !text.includes('\n') && !text.includes('"')) {
-                        selector = `${el.tagName.toLowerCase()}:text-is("${text}")`;
+                        selector = `text="${text}"`;
                     } else if (el.type === 'submit' || el.className) {
                         const classClean = Array.from(el.classList).join('.');
                         selector = classClean ? `${el.tagName.toLowerCase()}.${classClean}` : el.tagName.toLowerCase();
