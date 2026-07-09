@@ -42,7 +42,7 @@ class BrowserHelper:
         if not self.page:
             return []
 
-        elements = await self.page.evaluate("""() => {
+        elements = await self.page.evaluate(r"""() => {
             const isVisible = (el) => {
                 if (!el) return false;
                 // Strip out scripts, styles, SVGs, meta, and hidden iframe environments
