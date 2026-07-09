@@ -224,10 +224,12 @@ if run_parallel:
                 
                 log_cb = make_log_callback(idx)
                 
-                # Dynamic task definition
+                # Dynamic task definition with deepcopy for complete memory isolation
+                import copy
+                config_copy = copy.deepcopy(config)
                 tasks.append(
                     run_autonomous_navigator(
-                        config_registry=config,
+                        config_registry=config_copy,
                         target_url=target["url"],
                         user_goal=target["goal"],
                         run_id=run_id,

@@ -23,11 +23,13 @@ async def main():
     ]
     
     tasks = []
+    import copy
     for idx, target in enumerate(targets):
         run_id = target["name"].lower().replace(" ", "_")
+        config_copy = copy.deepcopy(config)
         tasks.append(
             run_autonomous_navigator(
-                config_registry=config,
+                config_registry=config_copy,
                 target_url=target["url"],
                 user_goal=target["goal"],
                 run_id=run_id
