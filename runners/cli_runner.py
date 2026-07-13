@@ -41,20 +41,31 @@ async def main():
             )
         )
         
-    print("🚀 Spawning parallel runs concurrently...")
+    print("🚀 Spawning Parallel AI Test Automation Suite concurrently...")
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     print("\n" + "="*50)
     print("📊 CONSOLIDATED ENTERPRISE QA METRICS MATRIX")
     print("="*50)
+    all_succeeded = True
     for idx, res in enumerate(results):
         target = targets[idx]
         if isinstance(res, Exception):
             print(f"App: {target['name']} | Status: CRASHED/ERROR | Steps: 0 | Error: {res}")
+            all_succeeded = False
         else:
             print(f"App: {res.get('run_id')} | Status: {res.get('status')} | Steps: {res.get('total_steps')} | Duration: {res.get('duration_seconds')}s | Final: {res.get('is_final')}")
             print(f"  Screenshot: {res.get('screenshot_path')}")
+            if not res.get("is_final") or res.get("status") != "SUCCESS":
+                all_succeeded = False
     print("="*50 + "\n")
+
+    if all_succeeded:
+        print("🎉 Parallel AI Test Automation Suite completed successfully.")
+        sys.exit(0)
+    else:
+        print("❌ Parallel AI Test Automation Suite failed or encountered errors.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())

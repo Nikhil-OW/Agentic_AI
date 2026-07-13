@@ -13,22 +13,32 @@ class BrowserHelper:
         self.page = None
 
     async def initialize_maximized_page(self, headless=False):
-        """Launches a fully maximized browser instance across Windows setups."""
+        """Launches a fully maximized or background browser instance dynamically."""
         self.playwright = await async_playwright().start()
+        launch_args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process"
+        ]
+        if not headless:
+            launch_args.append("--start-maximized")
+            
         self.browser = await self.playwright.chromium.launch(
-            headless=False,  # Explicitly overrides any background defaults
-            args=[
-                "--start-maximized",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process"
-            ]
+            headless=headless,
+            args=launch_args
         )
-        self.context = await self.browser.new_context(no_viewport=True)  # Allows --start-maximized to work natively
+        
+        if not headless:
+            self.context = await self.browser.new_context(no_viewport=True)  # Allows --start-maximized to work natively
+        else:
+            self.context = await self.browser.new_context(viewport={"width": 1280, "height": 800})
+            
         self.page = await self.context.new_page()
-        await self.page.bring_to_front()  # Force the OS window manager to bring the browser to focus
+        if not headless:
+            await self.page.bring_to_front()  # Force the OS window manager to bring the browser to focus
+            
         # Auto-accept dialogs (such as 'Product added' alerts on demoblaze) to prevent blocking the agent
         self.page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
         return self.page

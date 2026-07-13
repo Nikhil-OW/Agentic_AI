@@ -178,9 +178,9 @@ with col_add:
         st.rerun()
 
 with col_run:
-    run_parallel = st.button("🚀 Run Test Suite")
+    run_test_suite = st.button("🚀 Run Test Suite")
 
-if run_parallel:
+if run_test_suite:
     if not st.session_state.targets:
         st.warning("⚠️ No target applications configured. Please add at least one target.")
     else:
