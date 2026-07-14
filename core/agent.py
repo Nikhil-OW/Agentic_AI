@@ -91,30 +91,147 @@ def load_system_instructions():
         return "Return a valid JSON instruction for QA automation."
 
 
-def generate_dynamic_test_data():
+def generate_jit_test_data(live_elements):
     """
-    Industry-Standard Synthetic Data Engine.
-    Generates a randomized payload on the fly to fulfill form constraints without static maintenance.
+    Reactively generates a synthetic data pool tailored to the exact input fields
+    physically rendered on the active page.
     """
-    first_name = fake.first_name()
-    last_name = fake.last_name()
-    base_email = f"{first_name.lower()}.{last_name.lower()}@{fake.free_email_domain()}"
+    jit_payload = {}
+    
+    # Analyze what fields are physically present
+    has_first = False
+    has_last = False
+    has_email = False
+    has_personal_email = False
+    has_work_email = False
+    has_phone = False
+    has_company = False
+    has_title = False
+    has_city = False
+    has_address = False
+    has_zip = False
+    has_memo = False
+    has_empid = False
+    has_password = False
+    has_dob = False
+    has_joining = False
+    has_exp = False
+    has_dept = False
+    has_salary = False
+    has_uan = False
+    
+    for el in live_elements:
+        tag = str(el.get("tag", "")).lower()
+        el_type = str(el.get("type", "")).lower()
+        if tag not in ["input", "select", "textarea"]:
+            continue
+        if el_type in ["button", "submit", "checkbox", "radio", "file", "hidden"]:
+            continue
+            
+        name = (el.get("name") or "").lower()
+        id_attr = (el.get("id") or "").lower()
+        label = (el.get("label") or "").lower()
+        placeholder = (el.get("placeholder") or "").lower()
+        target_key = f"{name} {id_attr} {label} {placeholder}".strip()
+        
+        if "first" in target_key or "fname" in target_key:
+            has_first = True
+        elif "last" in target_key or "lname" in target_key:
+            has_last = True
+        elif "personal" in target_key:
+            has_personal_email = True
+        elif "work" in target_key:
+            has_work_email = True
+        elif "email" in target_key:
+            has_email = True
+        elif "phone" in target_key or "mobile" in target_key or "number" in target_key:
+            has_phone = True
+        elif "company" in target_key:
+            has_company = True
+        elif "title" in target_key or "designation" in target_key:
+            has_title = True
+        elif "city" in target_key or "location" in target_key:
+            has_city = True
+        elif "address" in target_key:
+            has_address = True
+        elif "zip" in target_key or "postal" in target_key:
+            has_zip = True
+        elif "id" in target_key or "employee" in target_key:
+            has_empid = True
+        elif "password" in target_key:
+            has_password = True
+        elif "dob" in target_key or "birth" in target_key:
+            has_dob = True
+        elif "date" in target_key or "joining" in target_key:
+            has_joining = True
+        elif "experience" in target_key:
+            has_exp = True
+        elif "department" in target_key:
+            has_dept = True
+        elif "salary" in target_key:
+            has_salary = True
+        elif "uan" in target_key:
+            has_uan = True
+        elif "memo" in target_key or "note" in target_key or "description" in target_key:
+            has_memo = True
 
-    return {
-        "first_name": first_name,
-        "last_name": last_name,
-        "full_name": f"{first_name} {last_name}",
-        "email": base_email,
-        "work_email": f"work.{first_name.lower()}.{last_name.lower()}@optimworks.com",
-        "personal_email": f"personal.{first_name.lower()}.{last_name.lower()}@example.com",
-        "company": fake.company(),
-        "job_title": fake.job(),
-        "phone_number": f"9{fake.msisdn()[:9]}",  # Generates a realistic 10-digit number
-        "city": fake.city(),
-        "street_address": fake.street_address(),
-        "zip_code": fake.zipcode(),
-        "text_memo": fake.paragraph(nb_sentences=3)
-    }
+    # Lazy generate Faker values ONLY for elements that exist on page
+    if has_first:
+        jit_payload["first_name"] = fake.first_name()
+    if has_last:
+        jit_payload["last_name"] = fake.last_name()
+    if has_first and has_last:
+        jit_payload["full_name"] = f"{jit_payload['first_name']} {jit_payload['last_name']}"
+    elif has_first:
+        jit_payload["full_name"] = f"{jit_payload['first_name']} {fake.last_name()}"
+    elif has_last:
+        jit_payload["full_name"] = f"{fake.first_name()} {jit_payload['last_name']}"
+        
+    if has_personal_email:
+        f_name = jit_payload.get("first_name", fake.first_name()).lower()
+        l_name = jit_payload.get("last_name", fake.last_name()).lower()
+        jit_payload["personal_email"] = f"personal.{f_name}.{l_name}@example.com"
+    if has_work_email:
+        f_name = jit_payload.get("first_name", fake.first_name()).lower()
+        l_name = jit_payload.get("last_name", fake.last_name()).lower()
+        jit_payload["work_email"] = f"work.{f_name}.{l_name}@optimworks.com"
+    if has_email:
+        f_name = jit_payload.get("first_name", fake.first_name()).lower()
+        l_name = jit_payload.get("last_name", fake.last_name()).lower()
+        jit_payload["email"] = f"{f_name}.{l_name}@{fake.free_email_domain()}"
+        
+    if has_phone:
+        jit_payload["phone_number"] = f"9{fake.msisdn()[:9]}"
+    if has_company:
+        jit_payload["company"] = fake.company()
+    if has_title:
+        jit_payload["job_title"] = fake.job()
+    if has_city:
+        jit_payload["city"] = fake.city()
+    if has_address:
+        jit_payload["street_address"] = fake.street_address()
+    if has_zip:
+        jit_payload["zip_code"] = fake.zipcode()
+    if has_empid:
+        jit_payload["employee_id"] = f"EMP{fake.random_int(1000, 9999)}"
+    if has_password:
+        jit_payload["password"] = "Password123!"
+    if has_dob:
+        jit_payload["dob"] = "1995-05-15"
+    if has_joining:
+        jit_payload["joining_date"] = "2026-07-01"
+    if has_exp:
+        jit_payload["past_experience"] = str(fake.random_int(1, 10))
+    if has_dept:
+        jit_payload["department"] = "Engineering"
+    if has_salary:
+        jit_payload["salary"] = str(fake.random_int(50000, 150000))
+    if has_uan:
+        jit_payload["uan"] = f"100{fake.random_int(100000000, 999999999)}"
+    if has_memo:
+        jit_payload["text_memo"] = fake.paragraph(nb_sentences=3)
+        
+    return jit_payload
 
 
 def extract_json_block(text: str) -> str:
@@ -238,11 +355,8 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
     max_steps = config_registry["environment"].get("max_retry_steps", 8)
 
-    # Instantiate today's fresh dynamic dataset
-    dynamic_payload = generate_dynamic_test_data()
-    log("🎲 DYNAMIC TEST DATA ASSET INSTANTIATED:")
-    log(json.dumps(dynamic_payload, indent=2))
-    log("--------------------------------------------------")
+    # Initialize dynamic data payload
+    dynamic_payload = {}
 
     # Initialize an execution memory matrix to maintain run context
     execution_history = []
@@ -272,11 +386,13 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             validation_error = await detect_validation_errors(page)
             if validation_error:
                 log(f"⚠️ SELF-HEALING: Validation/rejection error detected on page: {validation_error}")
-                # Dynamically regenerate alternative data parameters using Faker
-                log("🎲 SELF-HEALING: Re-generating alternative synthetic data parameters...")
-                dynamic_payload = generate_dynamic_test_data()
-                log("🎲 NEW DYNAMIC TEST DATA ASSET INSTANTIATED:")
-                log(json.dumps(dynamic_payload, indent=2))
+                log("🎲 SELF-HEALING: Re-generating alternative synthetic data parameters for active screen...")
+                
+            # Reactively generate JIT test data for fields currently on the page
+            dynamic_payload = generate_jit_test_data(live_elements)
+            log("🎲 JIT SYNTHETIC DATA POOL GENERATED FOR ACTIVE SCREEN:")
+            log(json.dumps(dynamic_payload, indent=2))
+            log("--------------------------------------------------")
 
             # 2. Build context payload, injecting history tracking layer and error context if present
             error_injection = ""
@@ -554,6 +670,13 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             # Determine final status with variations supported
             is_final_raw = command.get('is_final') or command.get('final') or command.get('isFinal') or False
             is_final = str(is_final_raw).lower() in ('true', '1', 'yes') if not isinstance(is_final_raw, bool) else is_final_raw
+
+            # Post-action validation verification (Error-Retry self-healing check)
+            post_action_error = await detect_validation_errors(page)
+            if post_action_error and is_final:
+                log(f"⚠️ SELF-HEALING OVERRIDE: Post-action validation error detected on page: {post_action_error}")
+                log("🛡️ Rejecting agent finalization request. Retrying submission with healed data...")
+                is_final = False
 
             step += 1
             await asyncio.sleep(2)
