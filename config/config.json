@@ -2,7 +2,7 @@
   "environment": {
     "default_url": "https://dev.urbuddi.com/login",
     "timeout_ms": 5000,
-    "max_retry_steps": 15
+    "max_retry_steps": 25
   },
   "test_data": {
     "username": "nikhil.pachipala@optimworks.com",

@@ -88,6 +88,13 @@ class BrowserHelper:
             const targetQuery = 'input, button, select, textarea, a, li, [role="button"], [role="checkbox"], [role="radio"], h1, h2, h3, .alert, .error, [class*="nav-item"], [class*="menu-item"]';
             const nodes = Array.from(document.querySelectorAll(targetQuery)).filter(isVisible);
 
+            const cleanText = (str) => {
+                if (!str) return '';
+                let cleaned = str.replace(/[^\x20-\x7E]+/g, ' ');
+                cleaned = cleaned.replace(/<[0-9a-fA-F]+>|&[#\w\d]+;/g, '');
+                return cleaned.replace(/\s+/g, ' ').trim();
+            };
+
             return nodes.map(el => {
                 const tag = el.tagName.toLowerCase();
                 
@@ -101,7 +108,7 @@ class BrowserHelper:
                     return {
                         tag: el.tagName,
                         type: 'text_marker',
-                        text: el.innerText ? el.innerText.trim() : null
+                        text: cleanText(el.innerText) || null
                     };
                 }
 
@@ -109,13 +116,13 @@ class BrowserHelper:
                 let labelText = '';
                 if (el.id) {
                     const lbl = document.querySelector(`label[for="${el.id}"]`);
-                    if (lbl) labelText = lbl.innerText.trim();
+                    if (lbl) labelText = cleanText(lbl.innerText);
                 }
                 if (!labelText && el.parentElement) {
                     let parent = el.parentElement;
                     while (parent && parent.tagName !== 'BODY') {
                         if (parent.tagName === 'LABEL') {
-                            labelText = parent.innerText.trim();
+                            labelText = cleanText(parent.innerText);
                             break;
                         }
                         parent = parent.parentElement;
@@ -125,7 +132,7 @@ class BrowserHelper:
                 // Determine dynamic selectors
                 let selector = el.id ? `#${el.id}` : el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : '';
                 if (!selector) {
-                    const text = el.innerText ? el.innerText.trim() : '';
+                    const text = cleanText(el.innerText);
                     if (text && text.length > 0 && text.length < 60 && !text.includes('\n') && !text.includes('"')) {
                         selector = `text="${text}"`;
                     } else if (el.type === 'submit' || el.className) {
@@ -145,7 +152,7 @@ class BrowserHelper:
                 let optionsList = [];
                 if (el.tagName === 'SELECT') {
                     optionsList = Array.from(el.options).map(opt => ({
-                        text: opt.text.trim(),
+                        text: cleanText(opt.text),
                         value: opt.value
                     }));
                 }
@@ -156,8 +163,8 @@ class BrowserHelper:
                     name: el.name || null,
                     label: labelText || null,
                     type: el.type || el.getAttribute('role') || 'text',
-                    placeholder: el.placeholder || el.getAttribute('aria-label') || null,
-                    text: el.innerText ? el.innerText.trim() : (el.value ? el.value.trim() : null),
+                    placeholder: cleanText(el.placeholder || el.getAttribute('aria-label') || '') || null,
+                    text: cleanText(el.innerText || el.value || '') || null,
                     options: optionsList.length > 0 ? optionsList : null,
                     disabled: el.disabled || false,
                     computed_selector: selector

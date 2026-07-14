@@ -48,6 +48,7 @@ async def main():
     print("📊 CONSOLIDATED ENTERPRISE QA METRICS MATRIX")
     print("="*50)
     all_succeeded = True
+    telemetry_reports = []
     for idx, res in enumerate(results):
         target = targets[idx]
         if isinstance(res, Exception):
@@ -56,9 +57,20 @@ async def main():
         else:
             print(f"App: {res.get('run_id')} | Status: {res.get('status')} | Steps: {res.get('total_steps')} | Duration: {res.get('duration_seconds')}s | Final: {res.get('is_final')}")
             print(f"  Screenshot: {res.get('screenshot_path')}")
+            if res.get('telemetry_report'):
+                telemetry_reports.append((res.get('run_id'), res.get('telemetry_report')))
             if not res.get("is_final") or res.get("status") != "SUCCESS":
                 all_succeeded = False
     print("="*50 + "\n")
+
+    if telemetry_reports:
+        print("==================================================")
+        print("📊 CONSOLIDATED PERFORMANCE TELEMETRY REPORTS")
+        print("==================================================")
+        for run_id, report in telemetry_reports:
+            print(f"\n[Run: {run_id}]")
+            print(report)
+        print("==================================================\n")
 
     if all_succeeded:
         print("🎉 Parallel AI Test Automation Suite completed successfully.")

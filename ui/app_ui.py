@@ -193,6 +193,7 @@ if run_test_suite:
         
         log_placeholders = []
         status_placeholders = []
+        telemetry_placeholders = []
         image_placeholders = []
         
         for idx, tab in enumerate(tabs):
@@ -203,12 +204,14 @@ if run_test_suite:
                 col_left, col_right = st.columns([4, 6])
                 with col_left:
                     status_placeholder = st.empty()
+                    telemetry_placeholder = st.empty()
                     image_placeholder = st.empty()
                 with col_right:
                     st.markdown("💻 **Execution Output Console**")
                     log_placeholder = st.empty()
                 
                 status_placeholders.append(status_placeholder)
+                telemetry_placeholders.append(telemetry_placeholder)
                 log_placeholders.append(log_placeholder)
                 image_placeholders.append(image_placeholder)
         
@@ -258,6 +261,8 @@ if run_test_suite:
                 status_placeholders[idx].error(f"❌ Execution crashed with exception: {res}")
             elif res.get("is_final"):
                 status_placeholders[idx].success(f"🎉 Success: Objective completed in {res['total_steps']} steps!")
+                if res.get("telemetry_report"):
+                    telemetry_placeholders[idx].code(res.get("telemetry_report"))
                 screenshot_path = res.get("screenshot_path")
                 if screenshot_path and os.path.exists(screenshot_path):
                     image_placeholders[idx].image(
@@ -267,6 +272,8 @@ if run_test_suite:
                     )
             else:
                 status_placeholders[idx].warning(f"⚠️ Warning: Session finished without meeting target state (Steps: {res.get('total_steps')})")
+                if res.get("telemetry_report"):
+                    telemetry_placeholders[idx].code(res.get("telemetry_report"))
                 screenshot_path = res.get("screenshot_path")
                 if screenshot_path and os.path.exists(screenshot_path):
                     image_placeholders[idx].image(
@@ -315,3 +322,11 @@ if run_test_suite:
         
         st.markdown("#### Execution Summary Matrix (Markdown)")
         st.code(df.to_markdown(index=False), language="markdown")
+
+        # 5. Consolidated Performance Telemetry Reports
+        st.markdown("---")
+        st.markdown("### 📊 CONSOLIDATED PERFORMANCE TELEMETRY REPORTS")
+        for idx, res in enumerate(results):
+            if not isinstance(res, Exception) and res.get("telemetry_report"):
+                st.markdown(f"#### 🖥️ {st.session_state.targets[idx]['name']}")
+                st.code(res.get("telemetry_report"))
