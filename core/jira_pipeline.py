@@ -100,6 +100,13 @@ class JiraExtractor:
                     res_data = json.loads(response.read().decode("utf-8"))
                     print("✅ JiraExtractor: REST API request succeeded. Parsing payload via Gemini...")
                     
+                    fields = res_data.get('fields', {})
+                    summary = fields.get('summary', '')
+                    description = fields.get('description', '')
+                    if not description or not str(description).strip():
+                        print("💡 JiraExtractor: Empty description detected. Falling back to ticket summary as requirements payload.")
+                        fields['description'] = summary
+                    
                     prompt = (
                         "You are an AI Jira business analyst. We have fetched the following Jira ticket JSON payload from the REST API:\n\n"
                         f"--- TICKET JSON PAYLOAD ---\n{json.dumps(res_data.get('fields', {}), indent=2)[:10000]}\n\n"
@@ -164,6 +171,9 @@ class JiraExtractor:
             )
             
             data = json.loads(response.text.strip())
+            if not data.get('description') or not str(data.get('description')).strip():
+                print("💡 JiraExtractor Fallback: Empty description detected. Falling back to ticket title.")
+                data['description'] = data.get('title', '')
             print(f"🎯 JiraExtractor Fallback: Extracted story: '{data.get('title')}' with {len(data.get('acceptance_criteria', []))} ACs.")
             return JiraStoryData(**data)
             
