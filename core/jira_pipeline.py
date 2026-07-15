@@ -11,6 +11,10 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
+from dotenv import load_dotenv
+
+# Initialize environment variables safely
+load_dotenv()
 
 # Append parent dir to sys.path to allow imports from core and utils
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,26 +55,96 @@ class JiraExtractor:
         self.client = genai.Client(api_key=api_key)
 
     async def extract_story(self, url: str) -> JiraStoryData:
-        """Loads a Jira ticket URL via Playwright, scrapes page text, and parses via Gemini."""
-        print(f"🌐 JiraExtractor: Initiating perception scraper for ticket URL: {url}")
-        
+        """Loads story details. Tries Atlassian REST API backend first, then falls back to browser scraping."""
         # Local mock bypass for smoke testing
         if url.startswith("mock://") or "dummy-jira" in url:
             print("💡 JiraExtractor: Mock URL detected. Short-circuiting to mock story data.")
             return self._get_mock_story_data()
 
+        user_email = os.getenv("JIRA_USER_EMAIL")
+        api_token = os.getenv("JIRA_API_TOKEN")
+        env_domain = os.getenv("JIRA_DOMAIN")
+        
+        # Regex to parse issue key (e.g., PROJ-123)
+        import re
+        issue_key = None
+        match = re.search(r'([a-zA-Z0-9]+-\d+)', url)
+        if match:
+            issue_key = match.group(1).upper()
+            
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        domain = env_domain or parsed_url.netloc
+        
+        if issue_key and user_email and api_token and domain:
+            print(f"📡 JiraExtractor: Attempting authenticated REST API fetch for key '{issue_key}' on domain '{domain}'")
+            import base64
+            import urllib.request
+            import urllib.error
+            
+            auth_str = f"{user_email}:{api_token}"
+            auth_bytes = auth_str.encode("utf-8")
+            auth_b64 = base64.b64encode(auth_bytes).decode("utf-8")
+            
+            headers = {
+                "Authorization": f"Basic {auth_b64}",
+                "Accept": "application/json"
+            }
+            
+            # Hit the v2 endpoint to get description as text/markdown instead of ADF JSON
+            api_url = f"https://{domain}/rest/api/2/issue/{issue_key}"
+            req = urllib.request.Request(api_url, headers=headers)
+            
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res_data = json.loads(response.read().decode("utf-8"))
+                    print("✅ JiraExtractor: REST API request succeeded. Parsing payload via Gemini...")
+                    
+                    prompt = (
+                        "You are an AI Jira business analyst. We have fetched the following Jira ticket JSON payload from the REST API:\n\n"
+                        f"--- TICKET JSON PAYLOAD ---\n{json.dumps(res_data.get('fields', {}), indent=2)[:10000]}\n\n"
+                        "Extract the user story Title (summary), Description, and Acceptance Criteria (AC). "
+                        "Also extract the target web application testing environment URL if found in any field.\n"
+                        "Structure the output matching the requested JSON schema."
+                    )
+                    
+                    response_gemini = self.client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=JiraStoryData,
+                        )
+                    )
+                    
+                    data = json.loads(response_gemini.text.strip())
+                    print(f"🎯 JiraExtractor: Successfully parsed REST response: '{data.get('title')}'")
+                    return JiraStoryData(**data)
+                    
+            except urllib.error.HTTPError as http_err:
+                print(f"⚠️ JiraExtractor REST API HTTPError: {http_err.code} {http_err.reason}. Falling back to browser scraper...")
+            except Exception as api_ex:
+                print(f"⚠️ JiraExtractor REST API General Error: {api_ex}. Falling back to browser scraper...")
+        else:
+            missing = []
+            if not issue_key: missing.append("Issue Key (failed parsing URL)")
+            if not user_email: missing.append("JIRA_USER_EMAIL")
+            if not api_token: missing.append("JIRA_API_TOKEN")
+            print(f"⚠️ JiraExtractor: Direct API ingestion bypassed due to missing credentials: {', '.join(missing)}")
+            print("🌐 JiraExtractor: Falling back to browser-based perception scraper...")
+
+        # --- FALLBACK: Playwright Scraper ---
         browser_helper = BrowserHelper()
         page = await browser_helper.initialize_maximized_page(headless=True)
         
         try:
-            # Navigate to Jira ticket
-            print(f"🌐 JiraExtractor: Loading page... {url}")
+            print(f"🌐 JiraExtractor Fallback: Loading page... {url}")
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(5)  # Wait for single page app dynamic load
             
             # Scrape raw text
             raw_text = await page.evaluate("() => document.body.innerText")
-            print(f"📄 JiraExtractor: Successfully scraped {len(raw_text)} characters from DOM.")
+            print(f"📄 JiraExtractor Fallback: Scraped {len(raw_text)} characters from DOM.")
             
             # Extract via Gemini
             prompt = (
@@ -90,11 +164,11 @@ class JiraExtractor:
             )
             
             data = json.loads(response.text.strip())
-            print(f"🎯 JiraExtractor: Extracted story: '{data.get('title')}' with {len(data.get('acceptance_criteria', []))} ACs.")
+            print(f"🎯 JiraExtractor Fallback: Extracted story: '{data.get('title')}' with {len(data.get('acceptance_criteria', []))} ACs.")
             return JiraStoryData(**data)
             
         except Exception as e:
-            print(f"⚠️ JiraExtractor Scraper Error: {e}. Falling back to default mock story for execution.")
+            print(f"⚠️ JiraExtractor Fallback Scraper Error: {e}. Falling back to default mock story for execution.")
             return self._get_mock_story_data()
         finally:
             await browser_helper.close_session()
