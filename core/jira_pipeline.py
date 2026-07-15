@@ -331,7 +331,7 @@ class PipelineOrchestrator:
     def __init__(self, config_registry: Dict[str, Any]):
         self.config = config_registry
 
-    async def execute_suite(self, excel_path: str = "outputs/test_suite.xlsx"):
+    async def execute_suite(self, excel_path: str = "outputs/test_suite.xlsx", sample_run: bool = False):
         """Reads test cases from Excel and runs them sequentially through the core agent."""
         if not os.path.isabs(excel_path):
             excel_path = os.path.join(project_root, excel_path)
@@ -365,7 +365,12 @@ class PipelineOrchestrator:
         max_row = ws.max_row
         print(f"📋 PipelineOrchestrator: Found {max_row - 1} test cases to execute.")
         
-        for row in range(2, max_row + 1):
+        rows_to_run = list(range(2, max_row + 1))
+        if sample_run:
+            print("[PIPELINE NOTIFICATION] Running in isolated sample verification mode. Only the primary scenario will be processed.")
+            rows_to_run = rows_to_run[:1]
+            
+        for row in rows_to_run:
             case_id = ws.cell(row=row, column=id_col).value
             goal = ws.cell(row=row, column=goal_col).value
             target_url = ws.cell(row=row, column=url_col).value or self.config["environment"]["target_url"]
@@ -380,8 +385,9 @@ class PipelineOrchestrator:
             # Execute through core agent
             run_id = f"pipeline_{case_id.lower()}"
             try:
-                # Force headless mode to prevent flashing browser windows during pipeline loops
-                self.config["environment"]["headless"] = True
+                # Respect CLI browser mode override if defined
+                if "headless" not in self.config["environment"]:
+                    self.config["environment"]["headless"] = True
                 summary = await run_autonomous_navigator(
                     config_registry=self.config,
                     target_url=target_url,
@@ -1002,7 +1008,7 @@ class ReportCompiler:
 # ----------------------------------------------------
 # Main Orchestrated Pipeline Entry Hook
 # ----------------------------------------------------
-async def run_full_pipeline(jira_url: str, output_dir: str = "outputs"):
+async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_run: bool = False):
     print("==================================================")
     print("🎬 STARTING COMPLETE AUTONOMOUS QA PIPELINE RUN")
     print("==================================================")
@@ -1034,7 +1040,7 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs"):
     
     # STEP 3: Sequentially execute test scenarios and record live results
     orchestrator = PipelineOrchestrator(config_registry=config)
-    await orchestrator.execute_suite(excel_path=excel_path)
+    await orchestrator.execute_suite(excel_path=excel_path, sample_run=sample_run)
     
     # STEP 4: Compile HTML executive dashboard
     ReportCompiler.compile_dashboard(excel_path=excel_path, output_path=html_path)

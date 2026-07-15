@@ -82,20 +82,26 @@ async def main():
     parser = argparse.ArgumentParser(description="Parallel AI Automation CLI Runner & QA Pipeline Orchestrator")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--suite", action="store_true", help="Execute the parallel multi-app automation suite (default).")
-    group.add_argument("--jira", type=str, help="Execute the E2E Jira QA Pipeline for the given Jira ticket/story URL.")
+    group.add_argument("--jira", "--jira-url", type=str, dest="jira", help="Execute the E2E Jira QA Pipeline for the given Jira ticket/story URL.")
+    
+    parser.add_argument("--sample-run", "-s", action="store_true", default=False, help="Isolated E2E smoke test on the first test scenario only.")
+    parser.add_argument("--headed", action="store_true", default=False, help="Execute the Playwright browser in headed mode.")
     
     args = parser.parse_known_args()[0]
     
     config = load_unified_config()
-    # Force headless for automated CLI runs
-    config["environment"]["headless"] = True
+    # Configure browser visibility based on CLI overrides (default to headless)
+    if args.headed:
+        config["environment"]["headless"] = False
+    else:
+        config["environment"]["headless"] = True
     
     if args.jira:
         print(f"📡 Launching E2E Jira QA Pipeline for URL: {args.jira}")
         try:
             # Resolve relative outputs directory absolutely to project root
             outputs_dir = os.path.join(project_root, "outputs")
-            await run_full_pipeline(jira_url=args.jira, output_dir=outputs_dir)
+            await run_full_pipeline(jira_url=args.jira, output_dir=outputs_dir, sample_run=args.sample_run)
             sys.exit(0)
         except Exception as e:
             print(f"❌ Jira QA Pipeline execution crashed: {e}")
