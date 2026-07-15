@@ -159,6 +159,8 @@ class TestCaseGenerator:
 
     def write_to_excel(self, cases: List[TestCaseItem], default_url: str, output_path: str = "outputs/test_suite.xlsx"):
         """Saves generated test cases into a highly polished, formatted Excel workbook."""
+        if not os.path.isabs(output_path):
+            output_path = os.path.join(project_root, output_path)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         wb = openpyxl.Workbook()
@@ -257,6 +259,8 @@ class PipelineOrchestrator:
 
     async def execute_suite(self, excel_path: str = "outputs/test_suite.xlsx"):
         """Reads test cases from Excel and runs them sequentially through the core agent."""
+        if not os.path.isabs(excel_path):
+            excel_path = os.path.join(project_root, excel_path)
         print(f"🚀 PipelineOrchestrator: Loading Excel suite from {excel_path}")
         
         if not os.path.exists(excel_path):
@@ -359,6 +363,10 @@ class ReportCompiler:
     @staticmethod
     def compile_dashboard(excel_path: str = "outputs/test_suite.xlsx", output_path: str = "outputs/dashboard.html"):
         """Generates premium standalone HTML QA dashboard with responsive layout and graphics."""
+        if not os.path.isabs(excel_path):
+            excel_path = os.path.join(project_root, excel_path)
+        if not os.path.isabs(output_path):
+            output_path = os.path.join(project_root, output_path)
         print(f"🎨 ReportCompiler: Compiling HTML dashboard from {excel_path}...")
         
         if not os.path.exists(excel_path):
@@ -924,6 +932,9 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs"):
     print("==================================================")
     print("🎬 STARTING COMPLETE AUTONOMOUS QA PIPELINE RUN")
     print("==================================================")
+    
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.join(project_root, output_dir)
     
     # 1. Initialize environment configurations
     config = load_unified_config()

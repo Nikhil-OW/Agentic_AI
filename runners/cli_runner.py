@@ -1,19 +1,19 @@
 import asyncio
 import os
-import json
 import sys
+import json
+import argparse
+import copy
+
 # Append the project root to sys.path to resolve core and utils modules
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from core.agent import run_autonomous_navigator, load_unified_config
+from core.jira_pipeline import run_full_pipeline
 
-async def main():
-    config = load_unified_config()
-    # Force headless for automated CLI verification run
-    config["environment"]["headless"] = True
-    
+async def run_parallel_suite(config):
     targets = [
         {
             "name": "Optimworks Employee Add",
@@ -28,7 +28,6 @@ async def main():
     ]
     
     tasks = []
-    import copy
     for idx, target in enumerate(targets):
         run_id = target["name"].lower().replace(" ", "_")
         config_copy = copy.deepcopy(config)
@@ -74,10 +73,37 @@ async def main():
 
     if all_succeeded:
         print("🎉 Parallel AI Test Automation Suite completed successfully.")
-        sys.exit(0)
+        return 0
     else:
         print("❌ Parallel AI Test Automation Suite failed or encountered errors.")
-        sys.exit(1)
+        return 1
+
+async def main():
+    parser = argparse.ArgumentParser(description="Parallel AI Automation CLI Runner & QA Pipeline Orchestrator")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--suite", action="store_true", help="Execute the parallel multi-app automation suite (default).")
+    group.add_argument("--jira", type=str, help="Execute the E2E Jira QA Pipeline for the given Jira ticket/story URL.")
+    
+    args = parser.parse_known_args()[0]
+    
+    config = load_unified_config()
+    # Force headless for automated CLI runs
+    config["environment"]["headless"] = True
+    
+    if args.jira:
+        print(f"📡 Launching E2E Jira QA Pipeline for URL: {args.jira}")
+        try:
+            # Resolve relative outputs directory absolutely to project root
+            outputs_dir = os.path.join(project_root, "outputs")
+            await run_full_pipeline(jira_url=args.jira, output_dir=outputs_dir)
+            sys.exit(0)
+        except Exception as e:
+            print(f"❌ Jira QA Pipeline execution crashed: {e}")
+            sys.exit(1)
+    else:
+        # Default behavior: run parallel multi-app test suite
+        exit_code = await run_parallel_suite(config)
+        sys.exit(exit_code)
 
 if __name__ == "__main__":
     asyncio.run(main())
