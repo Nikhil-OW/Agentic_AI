@@ -86,6 +86,7 @@ async def main():
     
     parser.add_argument("--sample-run", "-s", action="store_true", default=False, help="Isolated E2E smoke test on the first test scenario only.")
     parser.add_argument("--headed", action="store_true", default=False, help="Execute the Playwright browser in headed mode.")
+    parser.add_argument("--target-url", type=str, help="Inject target URL override for application under test.")
     
     args = parser.parse_known_args()[0]
     
@@ -95,13 +96,21 @@ async def main():
         config["environment"]["headless"] = False
     else:
         config["environment"]["headless"] = True
+        
+    if args.target_url:
+        config["environment"]["target_url"] = args.target_url
     
     if args.jira:
         print(f"📡 Launching E2E Jira QA Pipeline for URL: {args.jira}")
         try:
             # Resolve relative outputs directory absolutely to project root
             outputs_dir = os.path.join(project_root, "outputs")
-            await run_full_pipeline(jira_url=args.jira, output_dir=outputs_dir, sample_run=args.sample_run)
+            await run_full_pipeline(
+                jira_url=args.jira, 
+                output_dir=outputs_dir, 
+                sample_run=args.sample_run, 
+                target_url=args.target_url
+            )
             sys.exit(0)
         except Exception as e:
             print(f"❌ Jira QA Pipeline execution crashed: {e}")

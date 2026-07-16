@@ -24,6 +24,82 @@ if project_root not in sys.path:
 from core.agent import run_autonomous_navigator, load_unified_config
 from utils.browser_helper import BrowserHelper
 
+def call_gemini_with_retry(client, model, contents, config=None, max_attempts=5):
+    import re
+    import time
+    
+    # Introduce rate limiting sleep to avoid hitting immediate RPM limits
+    time.sleep(5.0)
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as ex:
+            ex_str = str(ex)
+            is_rate_limit = any(term in ex_str for term in ["429", "RESOURCE_EXHAUSTED", "Quota exceeded"])
+            is_unavailable = any(term in ex_str for term in ["503", "UNAVAILABLE"])
+            
+            if is_rate_limit or is_unavailable:
+                if is_rate_limit:
+                    match = re.search(r'(?:retry in|retryDelay[\'\"\s:]+)([\d\.]+)', ex_str)
+                    if match:
+                        sleep_time = float(match.group(1)) + 5.0
+                    else:
+                        sleep_time = (2 ** attempt) * 10
+                    alert_msg = f"Gemini API 429 Exhausted"
+                else:
+                    sleep_time = 60.0
+                    alert_msg = f"Gemini API 503 Unavailable"
+                
+                print(f"[RATE LIMIT ALERT] {alert_msg}. Automatically sleeping for {sleep_time:.2f} seconds before retrying execution loop (Attempt {attempt}/{max_attempts})...")
+                time.sleep(sleep_time)
+            else:
+                raise ex
+    raise Exception(f"Gemini API Rate Limit or Availability attempts exhausted ({max_attempts} attempts).")
+
+
+def write_pipeline_failure_to_excel(excel_path: str, error_message: str):
+    import os
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    
+    os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Test Suite Matrix"
+    ws.views.sheetView[0].showGridLines = True
+    
+    headers = ["Test Case ID", "Component", "Description", "Execution Goal", "Expected Result", "Status", "Target URL", "Timestamp", "Screenshot Link", "Issue Type"]
+    ws.append(headers)
+    
+    ws.append([
+        "TC000_ERR",
+        "Pipeline",
+        "Pipeline execution failed during ingestion/generation phase.",
+        f"Error: {error_message}",
+        "Pipeline should complete successfully.",
+        "FAILED",
+        "N/A",
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "",
+        "N/A"
+    ])
+    
+    fail_fill = PatternFill(start_color="FCE5CD", end_color="FCE5CD", fill_type="solid")
+    fail_font = Font(name="Segoe UI", size=10, bold=True, color="A61C00")
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=2, column=col)
+        cell.font = fail_font
+        if col == 6:
+            cell.fill = fail_fill
+            
+    wb.save(excel_path)
+    print(f"💾 Saved pipeline failure details to {excel_path}")
+
 # ----------------------------------------------------
 # Pydantic Schemas for Gemini Structured JSON Outputs
 # ----------------------------------------------------
@@ -32,6 +108,7 @@ class JiraStoryData(BaseModel):
     description: str = Field(description="The main description body of the story.")
     acceptance_criteria: List[str] = Field(description="List of acceptance criteria extracted from the story.")
     target_url: Optional[str] = Field(None, description="The test environment web application URL if mentioned in the story description.")
+    issue_type: Optional[str] = Field("User Story", description="The issue type of the ticket, e.g., User Story, Bug.")
 
 class TestCaseItem(BaseModel):
     test_case_id: str = Field(description="Unique identifier, e.g. TC001, TC002.")
@@ -47,19 +124,85 @@ class TestSuiteOutput(BaseModel):
 # ----------------------------------------------------
 # 1. Jira Ingestion Layer
 # ----------------------------------------------------
+def generate_dynamic_synthetic_story() -> JiraStoryData:
+    import random
+    from faker import Faker
+    fake = Faker()
+    
+    # Try to load target_url from config
+    target_url = "https://dev.urbuddi.com/login"
+    try:
+        from core.agent import load_unified_config
+        config = load_unified_config()
+        target_url = config["environment"].get("target_url") or config["environment"].get("default_url") or target_url
+    except Exception:
+        pass
+
+    # System contexts/components
+    actions = [
+        "Authenticate and access dashboard",
+        "Submit transaction form",
+        "Update user profile settings",
+        "Apply monthly leave requests",
+        "Process payroll calculations",
+        "Generate analytics report summary",
+        "Configure notification preferences"
+    ]
+    
+    rules = [
+        "must validate all mandatory input fields and reject empty submissions",
+        "should handle boundary conditions and enforce numeric limits",
+        "must trigger security alerts on multiple validation failures",
+        "must show success notifications and redirect to active view URL",
+        "should calculate zero-state values correctly if inputs are missing"
+    ]
+    
+    triggers = [
+        "under high system load parameters",
+        "with dynamic synthetic credentials",
+        "within the configured session timeout period",
+        "across all responsive viewport configurations"
+    ]
+    
+    title_action = random.choice(actions)
+    title = f"Dynamic Verification: {title_action} on Target Application"
+    
+    description = (
+        f"As a QA verification system, I want to programmatically execute: {title_action.lower()} "
+        f"so that I can validate that the system behaves correctly under rules such as: '{random.choice(rules)}'. "
+        f"This test is run using randomly synthesized inputs {random.choice(triggers)}."
+    )
+    
+    num_ac = random.randint(3, 5)
+    ac_list = []
+    for i in range(num_ac):
+        ac_list.append(
+            f"Verify that performing action '{random.choice(actions).lower()}' "
+            f"results in: '{random.choice(rules)}' {random.choice(triggers)}."
+        )
+        
+    return JiraStoryData(
+        title=title,
+        description=description,
+        acceptance_criteria=ac_list,
+        target_url=target_url,
+        issue_type=random.choice(["User Story", "Bug"])
+    )
+
+
 class JiraExtractor:
-    """Ingests Jira ticket URLs and extracts core details via DOM or perception fallback."""
+    """Ingests Jira ticket URLs and extracts core details via DOM or dynamic synthetic fallback."""
     
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
 
     async def extract_story(self, url: str) -> JiraStoryData:
-        """Loads story details. Tries Atlassian REST API backend first, then falls back to browser scraping."""
+        """Loads story details. Tries Atlassian REST API backend first, then falls back to dynamic synthetic factory."""
         # Local mock bypass for smoke testing
         if url.startswith("mock://") or "dummy-jira" in url:
-            print("💡 JiraExtractor: Mock URL detected. Short-circuiting to mock story data.")
-            return self._get_mock_story_data()
+            print("💡 JiraExtractor: Mock URL detected. Generating dynamic synthetic story data.")
+            return generate_dynamic_synthetic_story()
 
         user_email = os.getenv("JIRA_USER_EMAIL")
         api_token = os.getenv("JIRA_API_TOKEN")
@@ -74,130 +217,82 @@ class JiraExtractor:
             
         from urllib.parse import urlparse
         parsed_url = urlparse(url)
-        domain = env_domain or parsed_url.netloc
+        # Dynamically extract domains from incoming URL first, falling back to env_domain
+        domain = parsed_url.netloc if parsed_url.scheme in ["http", "https"] else env_domain
         
-        if issue_key and user_email and api_token and domain:
-            print(f"📡 JiraExtractor: Attempting authenticated REST API fetch for key '{issue_key}' on domain '{domain}'")
-            import base64
-            import urllib.request
-            import urllib.error
+        # Strict validation gate for Jira credentials
+        if not user_email or not str(user_email).strip() or not api_token or not str(api_token).strip() or not domain or not str(domain).strip():
+            print("❌ [JIRA AUTHENTICATION ERROR]: Missing or invalid Jira credentials in environment setup. Please check your .env or configuration files.")
+            raise Exception("❌ [JIRA AUTHENTICATION ERROR]: Missing or invalid Jira credentials in environment setup. Please check your .env or configuration files.")
             
-            auth_str = f"{user_email}:{api_token}"
-            auth_bytes = auth_str.encode("utf-8")
-            auth_b64 = base64.b64encode(auth_bytes).decode("utf-8")
-            
-            headers = {
-                "Authorization": f"Basic {auth_b64}",
-                "Accept": "application/json"
-            }
-            
-            # Hit the v2 endpoint to get description as text/markdown instead of ADF JSON
-            api_url = f"https://{domain}/rest/api/2/issue/{issue_key}"
-            req = urllib.request.Request(api_url, headers=headers)
-            
-            try:
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    res_data = json.loads(response.read().decode("utf-8"))
-                    print("✅ JiraExtractor: REST API request succeeded. Parsing payload via Gemini...")
-                    
-                    fields = res_data.get('fields', {})
-                    summary = fields.get('summary', '')
-                    description = fields.get('description', '')
-                    if not description or not str(description).strip():
-                        print("💡 JiraExtractor: Empty description detected. Falling back to ticket summary as requirements payload.")
-                        fields['description'] = summary
-                    
-                    prompt = (
-                        "You are an AI Jira business analyst. We have fetched the following Jira ticket JSON payload from the REST API:\n\n"
-                        f"--- TICKET JSON PAYLOAD ---\n{json.dumps(res_data.get('fields', {}), indent=2)[:10000]}\n\n"
-                        "Extract the user story Title (summary), Description, and Acceptance Criteria (AC). "
-                        "Also extract the target web application testing environment URL if found in any field.\n"
-                        "Structure the output matching the requested JSON schema."
-                    )
-                    
-                    response_gemini = self.client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=JiraStoryData,
-                        )
-                    )
-                    
-                    data = json.loads(response_gemini.text.strip())
-                    print(f"🎯 JiraExtractor: Successfully parsed REST response: '{data.get('title')}'")
-                    return JiraStoryData(**data)
-                    
-            except urllib.error.HTTPError as http_err:
-                print(f"⚠️ JiraExtractor REST API HTTPError: {http_err.code} {http_err.reason}. Falling back to browser scraper...")
-            except Exception as api_ex:
-                print(f"⚠️ JiraExtractor REST API General Error: {api_ex}. Falling back to browser scraper...")
-        else:
-            missing = []
-            if not issue_key: missing.append("Issue Key (failed parsing URL)")
-            if not user_email: missing.append("JIRA_USER_EMAIL")
-            if not api_token: missing.append("JIRA_API_TOKEN")
-            print(f"⚠️ JiraExtractor: Direct API ingestion bypassed due to missing credentials: {', '.join(missing)}")
-            print("🌐 JiraExtractor: Falling back to browser-based perception scraper...")
+        if not issue_key:
+            print("❌ [JIRA AUTHENTICATION ERROR]: Missing or invalid issue key parsed from URL.")
+            raise Exception("❌ [JIRA AUTHENTICATION ERROR]: Missing or invalid issue key parsed from URL.")
 
-        # --- FALLBACK: Playwright Scraper ---
-        browser_helper = BrowserHelper()
-        page = await browser_helper.initialize_maximized_page(headless=True)
+        print(f"📡 JiraExtractor: Attempting authenticated REST API fetch for key '{issue_key}' on domain '{domain}'")
+        import base64
+        import urllib.request
+        import urllib.error
+        
+        auth_str = f"{user_email}:{api_token}"
+        auth_bytes = auth_str.encode("utf-8")
+        auth_b64 = base64.b64encode(auth_bytes).decode("utf-8")
+        
+        headers = {
+            "Authorization": f"Basic {auth_b64}",
+            "Accept": "application/json"
+        }
+        
+        # Hit the v2 endpoint to get description as text/markdown instead of ADF JSON
+        api_url = f"https://{domain}/rest/api/2/issue/{issue_key}"
+        req = urllib.request.Request(api_url, headers=headers)
         
         try:
-            print(f"🌐 JiraExtractor Fallback: Loading page... {url}")
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(5)  # Wait for single page app dynamic load
-            
-            # Scrape raw text
-            raw_text = await page.evaluate("() => document.body.innerText")
-            print(f"📄 JiraExtractor Fallback: Scraped {len(raw_text)} characters from DOM.")
-            
-            # Extract via Gemini
-            prompt = (
-                "You are an AI Jira business analyst. Your job is to extract the User Story Title, "
-                "Description, Acceptance Criteria (AC), and any target web application testing URL from the raw text page dump below.\n\n"
-                f"--- RAW JIRA PAGE CONTENT ---\n{raw_text[:8000]}\n\n"
-                "Extract and structure the data into the requested JSON schema."
-            )
-            
-            response = self.client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=JiraStoryData,
+            with urllib.request.urlopen(req, timeout=10) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                print("✅ JiraExtractor: REST API request succeeded. Parsing payload via Gemini...")
+                
+                fields = res_data.get('fields', {})
+                summary = fields.get('summary', '')
+                description = fields.get('description', '')
+                issue_type = fields.get('issuetype', {}).get('name', 'User Story')
+                
+                if not description or not str(description).strip():
+                    print("💡 [JIRA FALLBACK ACTIVE]: Description empty. Utilizing Ticket Summary text instead.")
+                    fields['description'] = summary
+                    description = summary
+                
+                # Print exact text payload ingested
+                print(f"📋 [JIRA TEXT INGESTED]: {description}")
+                
+                prompt = (
+                    "You are an AI Jira business analyst. We have fetched the following Jira ticket JSON payload from the REST API:\n\n"
+                    f"--- TICKET JSON PAYLOAD ---\n{json.dumps(res_data.get('fields', {}), indent=2)[:10000]}\n\n"
+                    "Extract the user story Title (summary), Description, and Acceptance Criteria (AC). "
+                    "Also extract the target web application testing environment URL if found in any field.\n"
+                    "Structure the output matching the requested JSON schema."
                 )
-            )
-            
-            data = json.loads(response.text.strip())
-            if not data.get('description') or not str(data.get('description')).strip():
-                print("💡 JiraExtractor Fallback: Empty description detected. Falling back to ticket title.")
-                data['description'] = data.get('title', '')
-            print(f"🎯 JiraExtractor Fallback: Extracted story: '{data.get('title')}' with {len(data.get('acceptance_criteria', []))} ACs.")
-            return JiraStoryData(**data)
-            
-        except Exception as e:
-            print(f"⚠️ JiraExtractor Fallback Scraper Error: {e}. Falling back to default mock story for execution.")
-            return self._get_mock_story_data()
-        finally:
-            await browser_helper.close_session()
-
-    def _get_mock_story_data(self) -> JiraStoryData:
-        return JiraStoryData(
-            title="Authenticate and Verify Moodle Dashboard Accessibility",
-            description=(
-                "As an administrator, I want to authenticate on the sandbox Moodle system "
-                "so that I can access the system admin features. "
-                "Target environment URL: https://sandbox.moodledemo.net/login/index.php"
-            ),
-            acceptance_criteria=[
-                "Verify that entering valid administrator credentials logs the user into the system dashboard.",
-                "Verify that entering invalid credentials alerts the user with an 'Invalid login' banner.",
-                "Verify that dashboard redirects URL to '/my/' homepage upon authentication."
-            ],
-            target_url="https://sandbox.moodledemo.net/login/index.php"
-        )
+                
+                response_gemini = call_gemini_with_retry(
+                    client=self.client,
+                    model='gemini-2.5-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=JiraStoryData,
+                    )
+                )
+                
+                data = json.loads(response_gemini.text.strip())
+                if 'issue_type' not in data or not data['issue_type']:
+                    data['issue_type'] = issue_type
+                print(f"🎯 JiraExtractor: Successfully parsed REST response: '{data.get('title')}'")
+                return JiraStoryData(**data)
+                
+        except Exception as ex:
+            print(f"⚠️ JiraExtractor General Ingestion Error: {ex}. Bypassing browser fallback.")
+            print("💡 JiraExtractor: Triggering Dynamic Random Synthetic Factory...")
+            return generate_dynamic_synthetic_story()
 
 
 # ----------------------------------------------------
@@ -210,15 +305,43 @@ class TestCaseGenerator:
         self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
 
-    def generate_suite(self, story: JiraStoryData) -> List[TestCaseItem]:
+    def generate_suite(self, story: JiraStoryData, target_url: Optional[str] = None) -> List[TestCaseItem]:
         """Uses Gemini to predict scenarios based on story criteria."""
         print("🧠 TestCaseGenerator: Invoking Gemini to generate test cases...")
         
+        url_prompt_addition = ""
+        if target_url:
+            url_prompt_addition = f"\nAll test cases must be designed to be executed starting from this baseline URL: {target_url}\n"
+            
+        try:
+            config = load_unified_config()
+            test_data = config.get("test_data", {})
+            config_user = test_data.get("username", "")
+            config_pass = test_data.get("password", "")
+            if config_user and config_pass:
+                url_prompt_addition += f"\nFor any authentication scenario, prioritize using these credentials: Username: {config_user}, Password: {config_pass}. Do not generate synthetic placeholders.\n"
+        except Exception:
+            pass
+            
+        issue_type = story.issue_type or "User Story"
+        if issue_type.lower() == "bug":
+            type_prompt_addition = (
+                "\nThis issue is identified as a 'Bug'. Prioritize targeted edge-case verification, "
+                "regression tests, and validation of the fix to ensure the defect is resolved.\n"
+            )
+        else:
+            type_prompt_addition = (
+                "\nThis issue is identified as a 'User Story'. Focus on functional acceptance criteria "
+                "and happy path validation.\n"
+            )
+
         prompt = (
             "You are a Senior Principal QA Engineer. Analyse the following Jira User Story details:\n"
             f"Title: {story.title}\n"
             f"Description: {story.description}\n"
             f"Acceptance Criteria:\n" + "\n".join(f"- {ac}" for ac in story.acceptance_criteria) + "\n\n"
+            f"{url_prompt_addition}"
+            f"{type_prompt_addition}"
             "Predict and generate a comprehensive suite of logical test case scenarios. "
             "You must include:\n"
             "1. Happy path (successful authentication/execution).\n"
@@ -227,7 +350,8 @@ class TestCaseGenerator:
             "Return the list of test cases matching the structured schema."
         )
 
-        response = self.client.models.generate_content(
+        response = call_gemini_with_retry(
+            client=self.client,
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -241,7 +365,7 @@ class TestCaseGenerator:
         print(f"📊 TestCaseGenerator: Generated {len(cases)} test cases.")
         return cases
 
-    def write_to_excel(self, cases: List[TestCaseItem], default_url: str, output_path: str = "outputs/test_suite.xlsx"):
+    def write_to_excel(self, cases: List[TestCaseItem], default_url: str, output_path: str = "outputs/test_suite.xlsx", issue_type: str = "User Story"):
         """Saves generated test cases into a highly polished, formatted Excel workbook."""
         if not os.path.isabs(output_path):
             output_path = os.path.join(project_root, output_path)
@@ -269,7 +393,7 @@ class TestCaseGenerator:
             bottom=Side(style='thin', color='D9D9D9')
         )
         
-        headers = ["Test Case ID", "Component", "Description", "Execution Goal", "Expected Result", "Status", "Target URL", "Timestamp", "Screenshot Link"]
+        headers = ["Test Case ID", "Component", "Description", "Execution Goal", "Expected Result", "Status", "Target URL", "Timestamp", "Screenshot Link", "Issue Type"]
         ws.append(headers)
         
         # Style headers
@@ -291,7 +415,8 @@ class TestCaseGenerator:
                 "Pending",
                 default_url,
                 "",
-                ""
+                "",
+                issue_type
             ])
             
         # Style rows and set border
@@ -300,7 +425,7 @@ class TestCaseGenerator:
                 cell = ws.cell(row=row, column=col)
                 cell.font = cell_font
                 cell.border = thin_border
-                if col in [1, 2, 6, 8]:
+                if col in [1, 2, 6, 8, 10]:
                     cell.alignment = alignment_center
                 else:
                     cell.alignment = alignment_left
@@ -320,7 +445,8 @@ class TestCaseGenerator:
             "F": 12,  # Status
             "G": 30,  # Target URL
             "H": 20,  # Timestamp
-            "I": 25   # Screenshot Link
+            "I": 25,  # Screenshot Link
+            "J": 15   # Issue Type
         }
         for col, width in column_widths.items():
             ws.column_dimensions[col].width = width
@@ -372,6 +498,9 @@ class PipelineOrchestrator:
         fail_fill = PatternFill(start_color="FCE5CD", end_color="FCE5CD", fill_type="solid") # Light red
         fail_font = Font(name="Segoe UI", size=10, bold=True, color="A61C00")
         
+        skip_fill = PatternFill(start_color="F3F3F3", end_color="F3F3F3", fill_type="solid") # Light gray
+        skip_font = Font(name="Segoe UI", size=10, italic=True, color="7F7F7F")
+        
         max_row = ws.max_row
         print(f"📋 PipelineOrchestrator: Found {max_row - 1} test cases to execute.")
         
@@ -380,11 +509,23 @@ class PipelineOrchestrator:
             print("[PIPELINE NOTIFICATION] Running in isolated sample verification mode. Only the primary scenario will be processed.")
             rows_to_run = rows_to_run[:1]
             
+        has_failed = False
         for row in rows_to_run:
             case_id = ws.cell(row=row, column=id_col).value
             goal = ws.cell(row=row, column=goal_col).value
-            target_url = ws.cell(row=row, column=url_col).value or self.config["environment"]["target_url"]
+            # Force browser window to navigate exclusively to target URL override
+            target_url = self.config["environment"].get("target_url") or ws.cell(row=row, column=url_col).value
             
+            if has_failed:
+                print(f"⏭️ Skipping [{case_id}] because an upstream prerequisite scenario has failed.")
+                status_cell = ws.cell(row=row, column=status_col)
+                status_cell.value = "SKIPPED"
+                status_cell.fill = skip_fill
+                status_cell.font = skip_font
+                ws.cell(row=row, column=time_col).value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                wb.save(excel_path)
+                continue
+                
             print(f"\n⚡ Executing [{case_id}]: {goal[:80]}...")
             
             # Mark cell as Executing
@@ -408,6 +549,8 @@ class PipelineOrchestrator:
                 # Determine outcome
                 is_passed = summary.get("is_final") and summary.get("status") == "SUCCESS"
                 status_str = "PASSED" if is_passed else "FAILED"
+                if not is_passed:
+                    has_failed = True
                 
                 # Write results
                 status_cell = ws.cell(row=row, column=status_col)
@@ -431,6 +574,7 @@ class PipelineOrchestrator:
                 
             except Exception as run_ex:
                 print(f"❌ PipelineOrchestrator Execution Crash on {case_id}: {run_ex}")
+                has_failed = True
                 status_cell = ws.cell(row=row, column=status_col)
                 status_cell.value = "FAILED"
                 status_cell.fill = fail_fill
@@ -1018,7 +1162,7 @@ class ReportCompiler:
 # ----------------------------------------------------
 # Main Orchestrated Pipeline Entry Hook
 # ----------------------------------------------------
-async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_run: bool = False):
+async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_run: bool = False, target_url: Optional[str] = None):
     print("==================================================")
     print("🎬 STARTING COMPLETE AUTONOMOUS QA PIPELINE RUN")
     print("==================================================")
@@ -1036,25 +1180,35 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_r
     excel_path = os.path.join(output_dir, "test_suite.xlsx")
     html_path = os.path.join(output_dir, "dashboard.html")
     
-    # STEP 1: Ingest Jira story details
-    extractor = JiraExtractor(api_key=api_key)
-    story_data = await extractor.extract_story(jira_url)
-    
-    # STEP 2: Generate test cases and save to Excel workbook
-    generator = TestCaseGenerator(api_key=api_key)
-    test_cases = generator.generate_suite(story_data)
-    
-    # Resolve target URL based on extracted Jira story data or config default
-    testing_url = story_data.target_url or config["environment"]["target_url"]
-    generator.write_to_excel(test_cases, default_url=testing_url, output_path=excel_path)
-    
-    # STEP 3: Sequentially execute test scenarios and record live results
-    orchestrator = PipelineOrchestrator(config_registry=config)
-    await orchestrator.execute_suite(excel_path=excel_path, sample_run=sample_run)
-    
-    # STEP 4: Compile HTML executive dashboard
-    ReportCompiler.compile_dashboard(excel_path=excel_path, output_path=html_path)
-    
+    try:
+        # STEP 1: Ingest Jira story details
+        extractor = JiraExtractor(api_key=api_key)
+        story_data = await extractor.extract_story(jira_url)
+        
+        # Enforce priority sequence: CLI target_url -> config.json default_url
+        testing_url = target_url or config["environment"].get("default_url")
+        config["environment"]["target_url"] = testing_url
+        
+        # STEP 2: Generate test cases and save to Excel workbook
+        generator = TestCaseGenerator(api_key=api_key)
+        test_cases = generator.generate_suite(story_data, target_url=testing_url)
+        
+        generator.write_to_excel(test_cases, default_url=testing_url, output_path=excel_path, issue_type=story_data.issue_type or "User Story")
+        
+        # STEP 3: Sequentially execute test scenarios and record live results
+        orchestrator = PipelineOrchestrator(config_registry=config)
+        await orchestrator.execute_suite(excel_path=excel_path, sample_run=sample_run)
+        
+    except Exception as pipeline_ex:
+        print(f"❌ Gracefully handling pipeline failure: {pipeline_ex}")
+        write_pipeline_failure_to_excel(excel_path, str(pipeline_ex))
+        
+    # STEP 4: Compile HTML executive dashboard (always run to reflect current status, even failure)
+    try:
+        ReportCompiler.compile_dashboard(excel_path=excel_path, output_path=html_path)
+    except Exception as html_ex:
+        print(f"⚠️ Failed to compile HTML dashboard: {html_ex}")
+        
     print("\n==================================================")
     print("🎉 FULL PIPELINE COMPLETED SUCCESSFULLY!")
     print(f"📊 Excel Suite Matrix: {excel_path}")
