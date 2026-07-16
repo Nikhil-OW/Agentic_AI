@@ -27,6 +27,43 @@ from faker import Faker
 from pydantic import BaseModel, Field
 from utils.browser_helper import BrowserHelper
 
+def call_gemini_with_retry(client, model, contents, config=None, max_attempts=5):
+    import re
+    import time
+    
+    # Introduce rate limiting sleep to avoid hitting immediate RPM limits
+    time.sleep(5.0)
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as ex:
+            ex_str = str(ex)
+            is_rate_limit = any(term in ex_str for term in ["429", "RESOURCE_EXHAUSTED", "Quota exceeded"])
+            is_unavailable = any(term in ex_str for term in ["503", "UNAVAILABLE"])
+            
+            if is_rate_limit or is_unavailable:
+                if is_rate_limit:
+                    match = re.search(r'(?:retry in|retryDelay[\'\"\s:]+)([\d\.]+)', ex_str)
+                    if match:
+                        sleep_time = float(match.group(1)) + 5.0
+                    else:
+                        sleep_time = (2 ** attempt) * 10
+                    alert_msg = f"Gemini API 429 Exhausted"
+                else:
+                    sleep_time = 60.0
+                    alert_msg = f"Gemini API 503 Unavailable"
+                
+                print(f"[RATE LIMIT ALERT] {alert_msg}. Automatically sleeping for {sleep_time:.2f} seconds before retrying execution loop (Attempt {attempt}/{max_attempts})...")
+                time.sleep(sleep_time)
+            else:
+                raise ex
+    raise Exception(f"Gemini API Rate Limit or Availability attempts exhausted ({max_attempts} attempts).")
+
 class ElementInteraction(BaseModel):
     action: str = Field(description="The action to perform: 'click', 'type', 'select', 'wait', 'press_key', or 'refresh'.")
     selector: Optional[str] = Field(None, description="The CSS selector or text matcher of the target element.")
@@ -458,6 +495,15 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
     ai_client = genai.Client(api_key=config_registry["api_key"])
     browser_engine = BrowserHelper()
     system_prompt = load_system_instructions()
+    test_data = config_registry.get("test_data", {})
+    config_user = test_data.get("username", "")
+    config_pass = test_data.get("password", "")
+    if config_user and config_pass:
+        system_prompt += (
+            f"\nIMPORTANT: If the active screen requires authentication, you MUST prioritize using these exact credentials: "
+            f"Username: {config_user}, Password: {config_pass}. "
+            f"Do not generate synthetic values for login inputs."
+        )
 
     max_steps = config_registry["environment"].get("max_retry_steps", 8)
 
@@ -515,8 +561,32 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                 log(f"⚠️ SELF-HEALING: Validation/rejection error detected on page: {validation_error}")
                 log("🎲 SELF-HEALING: Re-generating alternative synthetic data parameters for active screen...")
                 
-            # Reactively generate JIT test data for fields currently on the page
-            dynamic_payload = generate_jit_test_data(live_elements)
+            test_data = config_registry.get("test_data", {})
+            config_user = test_data.get("username", "")
+            config_pass = test_data.get("password", "")
+            
+            # Enforce hard static configuration credentials if on a login page context
+            is_login_context = False
+            try:
+                current_url = browser_engine.page.url.lower()
+                if "login" in current_url or any(el.get("id") in ["email", "userEmail", "username", "password", "userPassword"] for el in live_elements):
+                    is_login_context = True
+            except Exception:
+                pass
+
+            if is_login_context and config_user and config_pass:
+                log("🔐 Login context detected. Binding static credentials from configuration instead of triggering JIT generator.")
+                dynamic_payload = {
+                    "email": config_user,
+                    "username": config_user,
+                    "userEmail": config_user,
+                    "password": config_pass,
+                    "userPassword": config_pass
+                }
+            else:
+                # Reactively generate JIT test data for fields currently on the page
+                dynamic_payload = generate_jit_test_data(live_elements)
+                
             log("🎲 JIT SYNTHETIC DATA POOL GENERATED FOR ACTIVE SCREEN:")
             log(json.dumps(dynamic_payload, indent=2))
             log("--------------------------------------------------")
@@ -586,32 +656,21 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             log("📡 Sending layout matrix and memory history to AI brain...")
             response = None
             llm_start = time.time()
-            for attempt in range(5):
-                try:
-                    response = ai_client.models.generate_content(
-                        model='gemini-flash-lite-latest',
-                        contents=context_payload,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            response_mime_type="application/json",
-                            response_schema=AgentAction,
-                        )
-                    )
-                    break
-                except Exception as ex:
-                    log(f"⚠️ API Call failed (attempt {attempt + 1}/5): {ex}")
-                    if attempt < 4:
-                        if "429" in str(ex) or "RESOURCE_EXHAUSTED" in str(ex):
-                            import re
-                            match = re.search(r"retry in ([\d\.]+)s", str(ex))
-                            sleep_time = float(match.group(1)) + 2.0 if match else 60.0
-                            log(f"⏳ Quota rate limit hit. Waiting {sleep_time:.2f} seconds before retrying...")
-                        else:
-                            sleep_time = 2 ** attempt
-                            log(f"🔄 Retrying in {sleep_time} seconds...")
-                        await asyncio.sleep(sleep_time)
-                    else:
-                        raise ex
+            try:
+                response = call_gemini_with_retry(
+                    client=ai_client,
+                    model='gemini-flash-lite-latest',
+                    contents=context_payload,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        response_schema=AgentAction,
+                    ),
+                    max_attempts=3
+                )
+            except Exception as ex:
+                log(f"❌ Gemini API attempts completely exhausted: {ex}")
+                raise ex
             llm_duration = time.time() - llm_start
             llm_times.append(llm_duration)
             log(f"⏱️ Telemetry: LLM Inference Time: {llm_duration:.3f}s")

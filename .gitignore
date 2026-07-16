@@ -21,3 +21,7 @@ screenshots/
 # IDE configurations
 .idea/
 .vscode/
+
+# QA test run outputs
+outputs/
+

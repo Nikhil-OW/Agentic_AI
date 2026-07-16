@@ -14,6 +14,8 @@ class BrowserHelper:
 
     async def initialize_maximized_page(self, headless=False):
         """Launches a fully maximized or background browser instance dynamically."""
+        # For this demo phase, explicitly force headed browser launch visibility
+        headless = False
         self.playwright = await async_playwright().start()
         launch_args = [
             "--no-sandbox",
@@ -27,6 +29,7 @@ class BrowserHelper:
             
         self.browser = await self.playwright.chromium.launch(
             headless=headless,
+            slow_mo=1000,
             args=launch_args
         )
         
