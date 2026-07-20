@@ -62,14 +62,6 @@ async def run_parallel_suite(config):
                 all_succeeded = False
     print("="*50 + "\n")
 
-    if telemetry_reports:
-        print("==================================================")
-        print("📊 CONSOLIDATED PERFORMANCE TELEMETRY REPORTS")
-        print("==================================================")
-        for run_id, report in telemetry_reports:
-            print(f"\n[Run: {run_id}]")
-            print(report)
-        print("==================================================\n")
 
     if all_succeeded:
         print("🎉 Parallel AI Test Automation Suite completed successfully.")
@@ -79,6 +71,21 @@ async def run_parallel_suite(config):
         return 1
 
 async def main():
+    # Pre-run Artifact Cleanup (Screenshot Purging) - Clears root screenshots/ directory once per run execution
+    screenshots_dir = os.path.join(project_root, "screenshots")
+    if os.path.exists(screenshots_dir):
+        print(f"🧹 Master Boot Hook: Root screenshots directory detected. Wiping all files inside: {screenshots_dir}")
+        for filename in os.listdir(screenshots_dir):
+            filepath = os.path.join(screenshots_dir, filename)
+            try:
+                if os.path.isfile(filepath) or os.path.islink(filepath):
+                    os.unlink(filepath)
+                elif os.path.isdir(filepath):
+                    import shutil
+                    shutil.rmtree(filepath)
+            except Exception as e:
+                print(f"⚠️ Failed to delete artifact {filepath}: {e}")
+
     parser = argparse.ArgumentParser(description="Parallel AI Automation CLI Runner & QA Pipeline Orchestrator")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--suite", action="store_true", help="Execute the parallel multi-app automation suite (default).")

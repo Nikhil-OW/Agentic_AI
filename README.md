@@ -119,4 +119,29 @@ Upon completion of the parallel runs, the framework aggregates metrics from all 
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | Optimworks Employee Add | https://dev.urbuddi.com/login | SUCCESS | 4 | 57.09 | True | screenshots/run_optimworks_employee_add_final.png |
 | Moodle Admin Verify | https://sandbox.moodledemo.net/login/index.php | SUCCESS | 11 | 104.68 | True | screenshots/run_moodle_admin_verify_final.png |
+
+---
+
+## ⚡ Advanced Agentic QA Capabilities
+
+1. **Jira-Keyed Cache Partitioning & Dynamic Switching**:
+   The caching directory layout isolates all execution schemas inside the local `.testcache/` directory scoped to the active Jira issue identifier key (e.g. `.testcache/{JIRA_KEY}/`). If a cache directory for the current JIRA Key does not exist, the engine immediately initializes in **Dynamic Interpretation Mode**, bypassing all historical layout files. Blueprints and flow cache files are only serialized upon a successful test case run completion.
+
+2. **Automated Strict Mode Mitigation**:
+   Playwright Strict Mode violations are programmatically prevented. If an element selector matches duplicate nodes (such as Month/Year dropdown elements sharing generic selectors like `select.selectElement`), the engine automatically wraps the selector using zero-indexed sequential array markers (e.g. `>> nth=0`) to scope and execute actions cleanly.
+
+3. **Spatial Container Scoping & Blind Safety Guard Extermination**:
+   Interactive elements discoverable by the scraper are strictly constrained to active viewport modal/overlay child trees when a modal is visible, blocking the agent from parsing or typing fallback text into background page components or table filters.
+
+4. **Calendar-Aware Weekend & Holiday Logic Factory**:
+   The date engine in `core/agent.py` and JIT synthetic data generator is business-calendar aware for the 2026 system environment. Single-day leave selections strictly forbid Saturdays and Sundays unless explicitly instructed, while multi-day scenarios cross-validate UI-rendered 'No of Days' label nodes and auto-heal on holiday collisions using the closest business day boundary.
+
+5. **Single-Retry Loop Execution Policies & Responsive Timeout**:
+   Global element visibility check timeouts are locked at a responsive maximum threshold of `1500ms`. Step failure recovery allows a maximum of exactly 1 retry pass for self-healing remediation on any given step. If a step fails consecutively a second time, the engine raises a `RuntimeError` to fail-fast, marks the Test Case Status as `FAILED`, and immediately transitions to the next queue item.
+
+6. **Automated Workspace Screenshot Maintenance**:
+   Wipes all historical screenshots inside the root `screenshots/` directory once per command run execution before launching the browser context.
+
+7. **Cross-Test Semantic Learning Memory**:
+   Persists natural language optimization summary rules inside `.testcache/application_knowledge.json`. Resolving complex overlays or table layouts appends a new rule, which is injected back into the AI agent prompt under `## Dynamic Application Insights` at the start of subsequent test case executions.
 ```
