@@ -128,7 +128,7 @@ def load_system_instructions():
         return "Return a valid JSON instruction for QA automation."
 
 
-def generate_jit_test_data(live_elements):
+def generate_jit_test_data(live_elements, user_goal: str = ""):
     """
     Reactively generates a synthetic data pool tailored to the exact input fields
     physically rendered on the active page.
@@ -152,6 +152,10 @@ def generate_jit_test_data(live_elements):
     has_password = False
     has_dob = False
     has_joining = False
+    has_from_date = False
+    has_to_date = False
+    has_reason = False
+    has_subject = False
     has_exp = False
     has_dept = False
     has_salary = False
@@ -162,7 +166,7 @@ def generate_jit_test_data(live_elements):
         el_type = str(el.get("type", "")).lower()
         if tag not in ["input", "select", "textarea"]:
             continue
-        if el_type in ["button", "submit", "checkbox", "radio", "file", "hidden"]:
+        if el_type in ["button", "submit", "checkbox", "file", "hidden"]:
             continue
             
         name = (el.get("name") or "").lower()
@@ -199,8 +203,16 @@ def generate_jit_test_data(live_elements):
             has_password = True
         elif "dob" in target_key or "birth" in target_key:
             has_dob = True
+        elif "from" in target_key or "start" in target_key:
+            has_from_date = True
+        elif "to" in target_key or "end" in target_key:
+            has_to_date = True
         elif "date" in target_key or "joining" in target_key:
             has_joining = True
+        elif "subject" in target_key:
+            has_subject = True
+        elif "reason" in target_key or "purpose" in target_key:
+            has_reason = True
         elif "experience" in target_key:
             has_exp = True
         elif "department" in target_key:
@@ -254,9 +266,17 @@ def generate_jit_test_data(live_elements):
     if has_password:
         jit_payload["password"] = "Password123!"
     if has_dob:
-        jit_payload["dob"] = "1995-05-15"
+        jit_payload["dob"] = resolve_dynamic_date("dob", user_goal)
+    if has_from_date:
+        jit_payload["from_date"] = resolve_dynamic_date("from", user_goal)
+    if has_to_date:
+        jit_payload["to_date"] = resolve_dynamic_date("to", user_goal)
     if has_joining:
-        jit_payload["joining_date"] = "2026-07-01"
+        jit_payload["joining_date"] = resolve_dynamic_date("joining", user_goal)
+    if has_subject:
+        jit_payload["subject"] = "Leave Application"
+    if has_reason:
+        jit_payload["reason"] = "Personal work requirement"
     if has_exp:
         jit_payload["past_experience"] = str(fake.random_int(1, 10))
     if has_dept:
@@ -479,6 +499,136 @@ async def detect_success_indicators(page, live_elements, user_goal="", execution
     return None
 
 
+async def handle_active_modal(page, live_elements) -> tuple[bool, bool]:
+    # 1. Bypass Integrity Check: verify if a modal is actually present on screen
+    has_modal = False
+    try:
+        has_modal = await page.evaluate('''() => {
+            const modal = document.querySelector('div.modal, .modal, [class*="modal"]');
+            if (modal) {
+                const rect = modal.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && window.getComputedStyle(modal).display !== 'none';
+            }
+            const bodyText = document.body.innerText || "";
+            return bodyText.includes("LOP Warning") || bodyText.includes("Loss of Pay");
+        }''')
+    except Exception:
+        pass
+        
+    if not has_modal:
+        return False, False
+        
+    print("🚨 [MODAL INSPECTOR]: Active modal layout detected! Routing to dynamic modal handler.")
+    
+    # 2. Targeted semantic button selectors & Force parameter binding
+    selectors_to_try = [
+        'button:has-text("Ok")',
+        'button:text("Ok")',
+        'button:has-text("Cancel")',
+        'button:text("Cancel")',
+        '.modal button:has-text("Ok")',
+        '.modal button:has-text("Cancel")',
+        'div.modal button',
+        '[class*="modal"] button'
+    ]
+    
+    for sel in selectors_to_try:
+        match_text = "Ok" if "ok" in sel.lower() else ("Cancel" if "cancel" in sel.lower() else "fallback button node")
+        try:
+            loc = page.locator(sel).first
+            if await loc.is_visible(timeout=1000):
+                print(f"[MODAL RESOLUTION]: Attempting click on button node matching text \"{match_text}\"")
+                is_cancel = "cancel" in sel.lower()
+                try:
+                    await loc.click(force=True, timeout=2000)
+                    await page.wait_for_timeout(1000)
+                    print(f"✅ [MODAL RESOLUTION SUCCESS]: Overlay successfully cleared via text \"{match_text}\"")
+                    return True, is_cancel
+                except Exception:
+                    print("❌ [MODAL RESOLUTION FAILED]: Direct click blocked. Retrying dynamic selector path...")
+                    raise
+        except Exception:
+            continue
+            
+    # Fallback to Escape press if buttons cannot be resolved or clicked
+    try:
+        print("🛠️ [MODAL RESOLUTION]: Attempting fallback dismissal via keyboard Escape.")
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(500)
+        return True, False
+    except Exception:
+        pass
+        
+    return False, False
+
+
+import datetime
+
+def is_weekend_2026(dt: datetime.date) -> bool:
+    return dt.weekday() in (5, 6)  # 5 = Saturday, 6 = Sunday
+
+def get_valid_business_day(start_date: datetime.date, forward: bool = True) -> datetime.date:
+    curr = start_date
+    while is_weekend_2026(curr):
+        curr += datetime.timedelta(days=1 if forward else -1)
+    return curr
+
+def resolve_dynamic_date(key: str, user_goal: str = "") -> str:
+    # Environment context locked to 2026 (current date July 20, 2026)
+    current_year = 2026
+    current_month = 7
+
+    key_lower = key.lower()
+    goal_lower = user_goal.lower()
+
+    if "dob" in key_lower or "birth" in key_lower:
+        return "1995-05-15"
+
+    allow_weekend = any(kw in goal_lower for kw in ["weekend", "saturday", "sunday"])
+
+    months = {
+        "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+        "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+        "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "october": 10,
+        "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12
+    }
+
+    target_month = None
+    for m_name, m_val in months.items():
+        if m_name in goal_lower:
+            target_month = m_val
+            break
+
+    if target_month is None:
+        # Immediate upcoming month (August 2026)
+        target_year = 2026
+        target_month = 8
+    else:
+        if target_month <= current_month:
+            # Past month relative to July 2026 -> map to closest upcoming future instance (e.g. May -> May 2027)
+            target_year = 2027
+        else:
+            target_year = 2026
+
+    if "from" in key_lower or "start" in key_lower or "joining" in key_lower:
+        dt = datetime.date(target_year, target_month, 1)
+        if not allow_weekend and is_weekend_2026(dt):
+            dt = get_valid_business_day(dt, forward=True)
+        return dt.strftime("%Y-%m-%d")
+    elif "to" in key_lower or "end" in key_lower:
+        import calendar
+        last_day = calendar.monthrange(target_year, target_month)[1]
+        dt = datetime.date(target_year, target_month, min(last_day, 28))
+        if not allow_weekend and is_weekend_2026(dt):
+            dt = get_valid_business_day(dt, forward=False)
+        return dt.strftime("%Y-%m-%d")
+    else:
+        dt = datetime.date(target_year, target_month, 15)
+        if not allow_weekend and is_weekend_2026(dt):
+            dt = get_valid_business_day(dt, forward=True)
+        return dt.strftime("%Y-%m-%d")
+
+
 async def run_autonomous_navigator(config_registry, target_url, user_goal, run_id="default_run", log_callback=None):
     def log(msg):
         formatted = f"[{run_id}] {msg}"
@@ -494,7 +644,22 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
     ai_client = genai.Client(api_key=config_registry["api_key"])
     browser_engine = BrowserHelper()
+
+    from core.test_cache_manager import check_and_init_cache, get_cache_dir
+    cache_exists = check_and_init_cache()
+    cache_dir = get_cache_dir()
+    if not cache_exists:
+        log(f"ℹ️ Active JIRA Key Cache directory '{cache_dir}' does not exist. Initializing 'Dynamic Interpretation Mode'.")
+    else:
+        log(f"ℹ️ Active JIRA Key Cache directory '{cache_dir}' exists. Cache is available.")
+
     system_prompt = load_system_instructions()
+    from core.test_cache_manager import load_application_knowledge
+    insights = load_application_knowledge()
+    if insights:
+        insights_str = "\n".join(f"- {ins}" for ins in insights)
+        system_prompt += f"\n\n## Dynamic Application Insights\n{insights_str}\n"
+        log("💡 [KNOWLEDGE LOOP]: Loaded and injected dynamic application insights into system prompt.")
     test_data = config_registry.get("test_data", {})
     config_user = test_data.get("username", "")
     config_pass = test_data.get("password", "")
@@ -504,6 +669,15 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             f"Username: {config_user}, Password: {config_pass}. "
             f"Do not generate synthetic values for login inputs."
         )
+
+    if any(kw in (user_goal or "").lower() for kw in ["extra work", "extra hours", "claim extra", "log extra"]):
+        system_prompt += (
+            "\n\n## CROSS-FUNCTIONAL NAVIGATION MAPPING FOR EXTRA WORK TICKETS\n"
+            "- CRITICAL RULE FOR EXTRA WORK WORKFLOWS: While summary metrics for extra hours or days are displayed inside the Leave Management dashboard (e.g., 'Extra Work In JUL' metrics cards), the actual interactive entry form, application, and submission workflow tasks for logging extra work MUST be executed within the 'Reimbursement' sidebar section.\n"
+            "- When a scenario or ticket mentions 'applying extra work', 'submitting extra work days', 'claiming extra work validation', or 'logging extra hours', you MUST programmatically favor navigating to the sidebar component matching text 'Reimbursement' (or anchor pattern `a:has-text(\"Reimbursement\")` / `li:has-text(\"Reimbursement\")`) rather than hunting for interactive input components inside the Leave Management overview grid.\n"
+            "- Ensure that dynamic validation rules cross-check that inputs entered in the Reimbursement module cleanly propagate back to or update the metric counts displayed on the primary dashboard tracking views.\n"
+        )
+        log("🔀 [NAVIGATION ROUTING ENHANCEMENT]: Goal references Extra Work. Injected Reimbursement sidebar routing rules into system prompt.")
 
     max_steps = config_registry["environment"].get("max_retry_steps", 8)
 
@@ -531,9 +705,18 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
         is_final = False
         step = 0
         interception_warning = None
-
+        consecutive_unchanged_count = 0
+        total_unchanged_steps = 0
+        hard_escape_until_step = 0
+        recovery_mode = False
+        
         while not is_final and step < max_steps:
             log(f"\n--- 🧠 Agent Dynamically Analyzing Step {step + 1} ---")
+            
+            force_next_clicks = False
+            if recovery_mode:
+                force_next_clicks = True
+                recovery_mode = False
             
             # Extract and clear active overlay warning
             active_interception = interception_warning
@@ -542,6 +725,44 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             # 1. Scrape deep layout parameters with timing telemetry
             scrape_start = time.time()
             live_elements = await browser_engine.extract_interactive_elements()
+
+            # Track state before action (and modal resolutions) for cached/layout sequence hits
+            import hashlib
+            before_url = page.url
+            before_repr = "".join(f"{el.get('computed_selector')}:{el.get('text')}" for el in live_elements)
+            before_dom_hash = hashlib.md5(before_repr.encode('utf-8')).hexdigest()
+            try:
+                before_focus = await page.evaluate("() => document.activeElement ? document.activeElement.tagName + '.' + document.activeElement.className + '#' + document.activeElement.id : ''")
+            except Exception:
+                before_focus = ""
+
+            # --- DYNAMIC PRE-FLIGHT MODAL INSPECTION ---
+            modal_resolved, is_cancel = await handle_active_modal(page, live_elements)
+            if modal_resolved:
+                log("🔄 Modal overlay successfully cleared during pre-flight. Re-evaluating screen layout...")
+                from core.test_cache_manager import save_application_knowledge, load_application_knowledge
+                knowledge = load_application_knowledge()
+                insight_desc = f"On URL path '{page.url}', dynamically resolved visible modal overlay using semantic click controls."
+                if insight_desc not in knowledge:
+                    knowledge.append(insight_desc)
+                    save_application_knowledge(knowledge)
+                    log(f"💾 [KNOWLEDGE APPENDED]: Saved modal resolution insight: '{insight_desc}'")
+                if is_cancel:
+                    log("🧹 [MODAL RESOLUTION]: Cancellation path ('Cancel') triggered. Clearing local cache loop memory traces immediately.")
+                    consecutive_failures.clear()
+                    consecutive_unchanged_count = 0
+                    
+                    from core.test_cache_manager import invalidate_flow_cache, invalidate_layout_map
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(page.url)
+                        path_fragment = parsed.path.strip("/")
+                        if path_fragment:
+                            invalidate_flow_cache(f"flow_{path_fragment}")
+                            invalidate_layout_map(path_fragment)
+                    except Exception as e_inv:
+                        log(f"⚠️ Invalidation error: {e_inv}")
+                live_elements = await browser_engine.extract_interactive_elements()
 
             # Check for success indicators at the beginning of the step
             success_indicator = await detect_success_indicators(page, live_elements, user_goal, execution_history)
@@ -585,7 +806,7 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                 }
             else:
                 # Reactively generate JIT test data for fields currently on the page
-                dynamic_payload = generate_jit_test_data(live_elements)
+                dynamic_payload = generate_jit_test_data(live_elements, user_goal)
                 
             log("🎲 JIT SYNTHETIC DATA POOL GENERATED FOR ACTIVE SCREEN:")
             log(json.dumps(dynamic_payload, indent=2))
@@ -652,40 +873,76 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                 f"{json.dumps(live_elements, indent=2)}"
             )
 
-            # 3. Process layout schema via the AI brain (with exponential backoff retries and timing)
-            log("📡 Sending layout matrix and memory history to AI brain...")
-            response = None
-            llm_start = time.time()
-            try:
-                response = call_gemini_with_retry(
-                    client=ai_client,
-                    model='gemini-flash-lite-latest',
-                    contents=context_payload,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json",
-                        response_schema=AgentAction,
-                    ),
-                    max_attempts=3
-                )
-            except Exception as ex:
-                log(f"❌ Gemini API attempts completely exhausted: {ex}")
-                raise ex
-            llm_duration = time.time() - llm_start
-            llm_times.append(llm_duration)
-            log(f"⏱️ Telemetry: LLM Inference Time: {llm_duration:.3f}s")
+            # --- CACHE-FIRST ROUTING AND TOKEN CONSERVATION ---
+            from core.test_cache_manager import get_cached_actions, save_cached_actions, check_preflight_layout, update_layout_map_from_actions
+            
+            used_cache = False
+            cache_type = None
+            cache_key = None
+            command = None
+            
+            if step < hard_escape_until_step:
+                log(f"🛡️ [HARD COGNITIVE ESCAPE ACTIVE]: Step {step + 1} is under Hard Cognitive Escape (until step {hard_escape_until_step}). Bypassing all cache shortcuts and forcing raw LLM inference.")
+            else:
+                cached_actions, matched_flow = get_cached_actions(page.url, page_text)
+                if cached_actions:
+                    log(f"📋 [CACHE HIT]: Injecting execution locators for '{matched_flow}' directly. Skipping LLM inference.")
+                    command = {
+                        "thought": f"Using cached sequence for {matched_flow} flow directly.",
+                        "actions": cached_actions,
+                        "is_final": False
+                    }
+                    used_cache = True
+                    cache_type = "flow"
+                    cache_key = matched_flow
+                else:
+                    # Pre-flight layout coordinate check
+                    layout_actions, matched_component = check_preflight_layout(user_goal, page.url, page_text, live_elements)
+                    if layout_actions:
+                        command = {
+                            "thought": "Resolving structural component coordinates via layout blueprint map directly.",
+                            "actions": layout_actions,
+                            "is_final": False
+                        }
+                        used_cache = True
+                        cache_type = "layout"
+                        cache_key = matched_component
+                    
+            if command is None:
+                # 3. Process layout schema via the AI brain (with exponential backoff retries and timing)
+                log("📡 Sending layout matrix and memory history to AI brain...")
+                response = None
+                llm_start = time.time()
+                try:
+                    response = call_gemini_with_retry(
+                        client=ai_client,
+                        model='gemini-flash-lite-latest',
+                        contents=context_payload,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            response_mime_type="application/json",
+                            response_schema=AgentAction,
+                        ),
+                        max_attempts=3
+                    )
+                except Exception as ex:
+                    log(f"❌ Gemini API attempts completely exhausted: {ex}")
+                    raise ex
+                llm_duration = time.time() - llm_start
+                llm_times.append(llm_duration)
+                log(f"⏱️ Telemetry: LLM Inference Time: {llm_duration:.3f}s")
 
-            # --- SELF-HEALING PARSING LAYER ---
-            raw_text = response.text.strip()
-            cleaned_text = extract_json_block(raw_text)
+                # --- SELF-HEALING PARSING LAYER ---
+                raw_text = response.text.strip()
+                cleaned_text = extract_json_block(raw_text)
 
-            try:
-                command = json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                log(f"⚠️ Raw Parsing Failed. Cleaned output was:\n{cleaned_text}")
-                log("🔄 Retrying current step due to formatting anomaly...")
-                step += 1
-                continue
+                try:
+                    command = json.loads(cleaned_text)
+                except json.JSONDecodeError:
+                    log(f"⚠️ Raw Parsing Failed. Cleaned output was:\n{cleaned_text}")
+                    log("🔄 Retrying current step due to formatting anomaly...")
+                    step += 1
+                    continue
 
             # Standardize alternative variation keys dynamically to prevent KeyErrors
             ai_thought = (
@@ -723,178 +980,103 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                     has_submit_in_actions = True
                     break
 
-            submit_element = None
-            input_elements = [el for el in live_elements if el.get("tag", "").lower() in ["input", "select", "textarea"] and el.get("type", "").lower() not in ["search", "button", "submit", "hidden"]]
-            has_inputs = len(input_elements) > 1
-            if has_inputs:
-                for el in live_elements:
-                    selector = el.get("computed_selector") or ""
-                    tag = el.get("tag", "").lower()
-                    text = (el.get("text") or "").lower()
-                    placeholder = (el.get("placeholder") or "").lower()
-                    is_btn = tag == "button" or el.get("type") == "submit" or "button" in selector or "submit" in selector
-                    is_submit_text = any(kw in text or kw in placeholder or kw in selector.lower() for kw in ["add", "save", "submit", "login", "create"])
-                    if is_btn and is_submit_text:
-                        submit_element = el
-                        break
-
-            if submit_element and not has_submit_in_actions:
-                is_final_raw = command.get('is_final') or command.get('final') or command.get('isFinal') or False
-                is_final_val = str(is_final_raw).lower() in ('true', '1', 'yes') if not isinstance(is_final_raw, bool) else is_final_raw
-                if is_final_val or len(actions_list) > 0:
-                    log(f"🛡️ Form Submission Safety Guard: Force-appending click on submission button '{submit_element['computed_selector']}'")
-                    actions_list.append({
-                        "action": "click",
-                        "selector": submit_element["computed_selector"],
-                        "text_to_type": None,
-                        "value_to_select": None,
-                        "wait_time_ms": 2000
-                    })
 
             # 4. Execute the planned interactions sequentially
             log(f"🛠️ Sequence Executor: Processing {len(actions_list)} planned action(s)...")
+            actions_executed_successfully = True
             for idx, act in enumerate(actions_list):
                 act_type = str(act.get('action', '')).lower().strip()
                 act_selector = act.get('selector') or act.get('target_selector') or act.get('css_selector')
                 act_text = act.get('text_to_type') or act.get('text') or act.get('value') or ''
                 act_select_val = act.get('value_to_select') or act.get('value') or act.get('text_to_type') or ''
                 act_wait = act.get('wait_time_ms')
+                # Spatial container scoping check:
+                if act_selector:
+                    try:
+                        has_visible_modal = await page.evaluate('''() => {
+                            const modal = document.querySelector('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
+                            if (modal) {
+                                const rect = modal.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0 && window.getComputedStyle(modal).display !== 'none';
+                            }
+                            return false;
+                        }''')
+                        if has_visible_modal and not any(m in str(act_selector).lower() for m in [".modal", "modal", "dialog"]):
+                            log(f"🔒 [SPATIAL CONTAINER SCOPING]: Active modal detected. Scoping selector '{act_selector}' to visible modal parent.")
+                            act_selector = f"[class*=\"modal\"]:visible >> {act_selector}"
+                    except Exception:
+                        pass
+
+                # Strict Mode Mitigation check:
+                if act_selector:
+                    try:
+                        count = await page.locator(act_selector).count()
+                        if count > 1 and ">> nth=" not in act_selector:
+                            log(f"⚠️ [STRICT MODE MITIGATION]: Selector '{act_selector}' matches {count} elements. Automatically scoping to first match (>> nth=0).")
+                            act_selector = f"{act_selector} >> nth=0"
+                    except Exception:
+                        pass
+
+                # Semantic Parent Link Interceptor for sidebar & menu navigation:
+                if act_type == 'click' and act_selector:
+                    import re
+                    match_raw_text = re.search(r'^text=["\']([^"\']+)["\'](?:\s*>>\s*nth=\d+)?$', act_selector.strip())
+                    if match_raw_text:
+                        target_text = match_raw_text.group(1)
+                        if any(nav_kw in target_text.lower() for nav_kw in ["leave", "reimbursement", "salary", "payroll", "employee", "dashboard", "setting", "report", "management"]):
+                            semantic_sel = f":is(a, button, li, [role=\"menuitem\"], .menu-item):has-text(\"{target_text}\")"
+                            try:
+                                if await page.locator(semantic_sel).count() > 0:
+                                    log(f"🔗 [SEMANTIC PARENT LINKING]: Converted raw text selector '{act_selector}' to interactive parent selector '{semantic_sel}'")
+                                    act_selector = semantic_sel
+                            except Exception:
+                                pass
+
+                # Extra Work Cross-Functional Routing Interceptor:
+                if any(kw in (user_goal or "").lower() for kw in ["extra work", "extra hours", "claim extra", "log extra"]):
+                    if act_type == 'click' and act_selector and not any(r in str(act_selector).lower() for r in ["reimbursement"]):
+                        try:
+                            reimb_loc = page.locator(':is(a, button, li, [role="menuitem"], .menu-item):has-text("Reimbursement")')
+                            if await reimb_loc.count() > 0 and await reimb_loc.first.is_visible(timeout=500):
+                                log(f"🔀 [REIMBURSEMENT ROUTING INTERCEPTOR]: Extra Work objective detected. Re-routing click action to 'Reimbursement' sidebar link.")
+                                act_selector = ':is(a, button, li, [role="menuitem"], .menu-item):has-text("Reimbursement")'
+                        except Exception:
+                            pass
 
                 log(f"  [{idx + 1}/{len(actions_list)}] Action: {act_type.upper()} on selector '{act_selector}'")
 
                 try:
                     if act_type == 'type':
-                        await page.wait_for_selector(act_selector, state="visible", timeout=5000)
-                        element = page.locator(act_selector)
-                        await element.scroll_into_view_if_needed()
-                        await element.focus()
-                        await element.fill(act_text)
+                        try:
+                            await page.wait_for_selector(act_selector, state="visible", timeout=1500)
+                            element = page.locator(act_selector)
+                            await element.scroll_into_view_if_needed()
+                            await element.focus()
+                            await element.fill(act_text)
+                        except Exception as e_type_stale:
+                            if any(err_kw in str(e_type_stale).lower() for err_kw in ["stale", "detached", "intercepts pointer", "not attached", "target closed"]):
+                                log(f"⚠️ [STABILITY GUARD]: Stale element or pointer interception detected on '{act_selector}'. Re-scraping live DOM tree to auto-heal locator reference...")
+                                fresh_elems = await browser_engine.extract_interactive_elements()
+                                for el in fresh_elems:
+                                    if el.get("computed_selector") and (act_text.lower() in str(el.get("text", "")).lower() or el.get("tag") in ["input", "textarea"]):
+                                        act_selector = el["computed_selector"]
+                                        break
+                                await page.wait_for_selector(act_selector, state="visible", timeout=1500)
+                                await page.locator(act_selector).fill(act_text, force=True)
+                            else:
+                                raise e_type_stale
+
                         await page.keyboard.press("Tab") # Shift focus to trigger React change handlers
-                        await asyncio.sleep(0.5) # Explicit wait to prevent React state propagation race conditions
+                        await asyncio.sleep(0.3) # 300ms layout stabilization sleep post form-filling
                     elif act_type == 'click':
-                        # Form Submission Safety Guard: check if this is the employee creation submit click
-                        is_submit_click = (
-                            'submit' in str(act_selector).lower() or 
-                            'add' in str(act_selector).lower() or 
-                            'save' in str(act_selector).lower() or
-                            'button[type="submit"]' in str(act_selector)
-                        )
-                        has_employee_form = (
-                            await page.locator("input:not([type='hidden']), select, textarea").count() > 1
-                            and not any(login_kw in str(act_selector).lower() for login_kw in ["login", "signin"])
-                        )
-
-                        if is_submit_click and has_employee_form:
-                            log("🛡️ Form Submission Safety Guard: Ensuring all available form fields are filled...")
-                            # 1. Locate all visible, enabled form fields
-                            fields = await page.locator("input, select, textarea").all()
-                            for field in fields:
-                                if not (await field.is_visible() and await field.is_enabled()):
-                                    continue
-                                
-                                tag_name = await field.evaluate("el => el.tagName")
-                                current_val = await field.evaluate("el => el.value")
-                                
-                                # If already filled, skip
-                                if current_val and current_val.strip():
-                                    continue
-                                    
-                                name_attr = (await field.get_attribute("name") or "").lower()
-                                id_attr = (await field.get_attribute("id") or "").lower()
-                                placeholder_attr = (await field.get_attribute("placeholder") or "").lower()
-                                target_key = f"{name_attr} {id_attr} {placeholder_attr}"
-                                
-                                # Match intents
-                                value_to_fill = None
-                                if "first" in target_key or "fname" in target_key:
-                                    value_to_fill = dynamic_payload.get("first_name")
-                                elif "last" in target_key or "lname" in target_key:
-                                    value_to_fill = dynamic_payload.get("last_name")
-                                elif "personal" in target_key:
-                                    value_to_fill = dynamic_payload.get("personal_email")
-                                elif "work" in target_key:
-                                    value_to_fill = dynamic_payload.get("work_email")
-                                elif "email" in target_key:
-                                    value_to_fill = dynamic_payload.get("email")
-                                elif "phone" in target_key or "mobile" in target_key or "number" in target_key:
-                                    value_to_fill = dynamic_payload.get("phone_number")
-                                elif "company" in target_key:
-                                    value_to_fill = dynamic_payload.get("company")
-                                elif "title" in target_key or "designation" in target_key:
-                                    value_to_fill = dynamic_payload.get("job_title")
-                                elif "city" in target_key or "location" in target_key:
-                                    value_to_fill = dynamic_payload.get("city")
-                                elif "address" in target_key:
-                                    value_to_fill = dynamic_payload.get("street_address")
-                                elif "zip" in target_key or "postal" in target_key:
-                                    value_to_fill = dynamic_payload.get("zip_code")
-                                elif "id" in target_key or "employee" in target_key:
-                                    value_to_fill = f"EMP{fake.random_int(1000, 9999)}"
-                                elif "password" in target_key:
-                                    value_to_fill = "Password123!"
-                                elif "dob" in target_key or "birth" in target_key:
-                                    value_to_fill = "1995-05-15"
-                                elif "date" in target_key or "joining" in target_key:
-                                    value_to_fill = "2026-07-01"
-                                elif "experience" in target_key:
-                                    value_to_fill = "3"
-                                elif "salary" in target_key:
-                                    value_to_fill = "75000"
-                                elif "uan" in target_key:
-                                    value_to_fill = f"100{fake.random_int(100000000, 999999999)}"
-                                elif "memo" in target_key or "note" in target_key or "description" in target_key:
-                                    value_to_fill = dynamic_payload.get("text_memo")
-                                
-                                # 2. Fill the field sequentially with explicit wait
-                                if tag_name == "SELECT":
-                                    # Wait for select element
-                                    await page.wait_for_selector(f"select[name='{name_attr}']" if name_attr else f"select#{id_attr}", state="visible", timeout=3000)
-                                    options = await field.locator("option").all()
-                                    for opt in options:
-                                        opt_val = await opt.get_attribute("value")
-                                        opt_text = await opt.inner_text()
-                                        if opt_val and opt_val.strip() and opt_val.lower() != "select":
-                                            await field.select_option(value=opt_val)
-                                            log(f"    ⚙️ Auto-filled select field '{name_attr or id_attr}' with: {opt_text}")
-                                            await page.keyboard.press("Escape")
-                                            # Click away to close select overlay
-                                            try:
-                                                await page.mouse.click(10, 10)
-                                            except Exception:
-                                                pass
-                                            await asyncio.sleep(0.5)
-                                            break
-                                elif tag_name in ["INPUT", "TEXTAREA"]:
-                                    type_attr = (await field.get_attribute("type") or "text").lower()
-                                    if type_attr in ["button", "submit", "checkbox", "radio", "file", "hidden"]:
-                                        continue
-                                    
-                                    if not value_to_fill:
-                                        value_to_fill = f"Test {name_attr or id_attr or 'Field'}"
-                                    
-                                    # Wait for input element
-                                    selector_spec = f"input[name='{name_attr}']" if name_attr else (f"input#{id_attr}" if id_attr else None)
-                                    if selector_spec:
-                                        await page.wait_for_selector(selector_spec, state="visible", timeout=3000)
-                                    
-                                    await field.scroll_into_view_if_needed()
-                                    await field.focus()
-                                    await field.fill(value_to_fill)
-                                    log(f"    ✍️ Auto-filled field '{name_attr or id_attr}' with: {value_to_fill}")
-                                    
-                                    # Dismiss calendar overlays
-                                    if "date" in target_key or "dob" in target_key or "joining" in target_key:
-                                        await page.keyboard.press("Escape")
-                                        # Click away to close calendar overlay
-                                        try:
-                                            await page.mouse.click(10, 10)
-                                        except Exception:
-                                            pass
-                                        await asyncio.sleep(0.5)
-                            
-                            log("🛡️ Form Submission Safety Guard: All available fields successfully populated.")
-
-                        await page.wait_for_selector(act_selector, state="visible", timeout=5000)
+                        try:
+                            await page.wait_for_selector(act_selector, state="visible", timeout=1500)
+                        except Exception as e_vis:
+                            if any(err_kw in str(e_vis).lower() for err_kw in ["stale", "detached", "intercepts pointer", "not attached"]):
+                                log(f"⚠️ [STABILITY GUARD]: Stale element reference detected on '{act_selector}'. Auto-healing locator...")
+                                fresh_elems = await browser_engine.extract_interactive_elements()
+                                if fresh_elems:
+                                    act_selector = fresh_elems[0].get("computed_selector", act_selector)
                         
                         is_nav_click = (
                             'href' in str(act_selector).lower() or
@@ -903,23 +1085,28 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                             'a' in str(act_selector).lower()
                         )
                         
+                        click_options = {}
+                        if force_next_clicks:
+                            log(f"    🛡️ Interception Recovery Bypass: programmatically forcing click on selector '{act_selector}'")
+                            click_options["force"] = True
+
                         if is_nav_click:
                             try:
-                                async with page.expect_navigation(wait_until="load", timeout=4000):
+                                async with page.expect_navigation(wait_until="load", timeout=1500):
                                     try:
-                                        await page.click(act_selector, timeout=4000)
+                                        await page.click(act_selector, timeout=1500, **click_options)
                                     except Exception as e_click:
                                         log(f"  ⚠️ Direct click on '{act_selector}' failed or was intercepted: {e_click}. Retrying with force=True...")
-                                        await page.click(act_selector, force=True)
+                                        await page.click(act_selector, force=True, timeout=1500)
                             except Exception:
                                 pass
                         else:
                             try:
-                                await page.click(act_selector, timeout=5000)
+                                await page.click(act_selector, timeout=1500, **click_options)
                             except Exception as e_click:
                                 log(f"  ⚠️ Direct click on '{act_selector}' failed or was intercepted: {e_click}. Retrying with force=True...")
                                 try:
-                                    await page.click(act_selector, force=True)
+                                    await page.click(act_selector, force=True, timeout=1500)
                                 except Exception:
                                     pass
                                     
@@ -930,12 +1117,19 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                         await asyncio.sleep(2)
                     elif act_type == 'select':
                         log(f"    ⚙️ Selecting option '{act_select_val}'")
-                        await page.wait_for_selector(act_selector, state="visible", timeout=5000)
-                        element = page.locator(act_selector)
-                        await element.scroll_into_view_if_needed()
-                        await element.select_option(value=act_select_val)
+                        try:
+                            await page.wait_for_selector(act_selector, state="visible", timeout=1500)
+                            element = page.locator(act_selector)
+                            await element.scroll_into_view_if_needed()
+                            await element.select_option(value=act_select_val)
+                        except Exception as e_sel_stale:
+                            log(f"⚠️ [STABILITY GUARD]: Stale selector on dropdown '{act_selector}': {e_sel_stale}. Retrying select with force...")
+                            try:
+                                await page.locator(act_selector).select_option(label=act_select_val)
+                            except Exception:
+                                pass
                         await page.keyboard.press("Tab")
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.3)
                     elif act_type == 'wait':
                         sleep_s = float(act_wait or 1000) / 1000.0
                         log(f"    ⏳ Sleeping for {sleep_s}s...")
@@ -943,7 +1137,7 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                     elif act_type == 'press_key':
                         log(f"    🎹 Pressing key '{act_text or 'Enter'}' on selector '{act_selector}'")
                         if act_selector:
-                            await page.wait_for_selector(act_selector, state="visible", timeout=5000)
+                            await page.wait_for_selector(act_selector, state="visible", timeout=1500)
                             await page.locator(act_selector).press(act_text or "Enter")
                         else:
                             await page.keyboard.press(act_text or "Enter")
@@ -967,6 +1161,15 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
                     if act_selector:
                         consecutive_failures[act_selector] = 0
+                        # Check if action targeted semantic cells or grid cells
+                        if any(gk in str(act_selector).lower() for gk in ["cell", "role=", "grid", "has-text"]):
+                            from core.test_cache_manager import save_application_knowledge, load_application_knowledge
+                            knowledge = load_application_knowledge()
+                            insight_desc = f"Resolved complex grid/table navigation on URL path '{page.url}' by using semantic cell target selector: '{act_selector}'."
+                            if insight_desc not in knowledge:
+                                knowledge.append(insight_desc)
+                                save_application_knowledge(knowledge)
+                                log(f"💾 [KNOWLEDGE APPENDED]: Saved grid targeting insight: '{insight_desc}'")
 
                     # If custom wait is specified, execute it
                     if act_wait and act_type != 'wait':
@@ -976,16 +1179,69 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
                     log(f"  ❌ Sequence Action failed: {e_act}")
                     err_msg = str(e_act).lower()
                     if "intercepts pointer events" in err_msg or "click intercepted" in err_msg:
+                        log("⚠️ [INTERCEPTION DETECTED]: Pointer interception occurred during action execution. Gracefully redirecting current step back to the AI analyzer using the updated Overlay Rules context...")
+                        dom_snap = json.dumps(live_elements, indent=2)
                         interception_warning = (
-                            f"Your click on selector '{act_selector}' was blocked because a dynamic overlay modal "
-                            "or popup (such as '#cartModal') was active and intercepting pointer events. "
-                            "You MUST immediately target and click the appropriate button/link INSIDE that modal "
-                            "(e.g., clicking 'View Cart' or closing the modal) before attempting to click any background elements."
+                            f"Playwright Pointer Interception Exception: Your action on selector '{act_selector}' was blocked by a dynamic overlay/modal.\n"
+                            f"Active DOM snapshot elements list:\n{dom_snap}\n"
+                            "Please analyze this DOM tree, apply the Overlay Rules, and return the exact selector (text-based or role-based selector scoped directly to the visible modal) to resolve the overlay."
                         )
                     if act_selector:
                         consecutive_failures[act_selector] = consecutive_failures.get(act_selector, 0) + 1
                         log(f"  ⚠️ Selector '{act_selector}' has failed consecutively {consecutive_failures[act_selector]} time(s).")
+                        if consecutive_failures[act_selector] >= 2:
+                            log(f"❌ [CRITICAL LIMIT REACHED]: Selector '{act_selector}' failed twice consecutively. Terminating execution.")
+                            raise RuntimeError(f"Step failed twice consecutively on selector '{act_selector}'")
                     log("  🔄 Stopping sequence execution early to allow self-healing re-analysis.")
+                    actions_executed_successfully = False
+                    break
+
+            if not cached_actions and actions_list and actions_executed_successfully:
+                try:
+                    save_cached_actions(page.url, page_text, actions_list)
+                except Exception as e_cache:
+                    log(f"⚠️ Failed to cache actions: {e_cache}")
+                    
+            if actions_list and actions_executed_successfully:
+                try:
+                    update_layout_map_from_actions(page.url, page_text, actions_list, live_elements)
+                except Exception as e_layout:
+                    log(f"⚠️ Failed to update layout map: {e_layout}")
+
+            if actions_executed_successfully:
+                after_url = page.url
+                new_elements = await browser_engine.extract_interactive_elements()
+                after_repr = "".join(f"{el.get('computed_selector')}:{el.get('text')}" for el in new_elements)
+                after_dom_hash = hashlib.md5(after_repr.encode('utf-8')).hexdigest()
+                try:
+                    after_focus = await page.evaluate("() => document.activeElement ? document.activeElement.tagName + '.' + document.activeElement.className + '#' + document.activeElement.id : ''")
+                except Exception:
+                    after_focus = ""
+                
+                # Check if state remains completely unchanged
+                if before_url == after_url and before_dom_hash == after_dom_hash and before_focus == after_focus:
+                    consecutive_unchanged_count += 1
+                    total_unchanged_steps += 1
+                    log(f"⚠️ [ANTI-LOOP GATES]: Detected unchanged viewport state (Consecutive: {consecutive_unchanged_count}/2 | Total: {total_unchanged_steps}/5).")
+                else:
+                    consecutive_unchanged_count = 0
+                    
+                if consecutive_unchanged_count >= 2:
+                    log(f"🚨 [ANTI-LOOP GATES]: Viewport remained unchanged for 2 consecutive steps. Invalidating stale cache key and engaging Hard Cognitive Escape for the next 3 steps...")
+                    from core.test_cache_manager import invalidate_flow_cache, invalidate_layout_map
+                    if cache_type == "flow" and cache_key:
+                        invalidate_flow_cache(cache_key)
+                    elif cache_type == "layout" and cache_key:
+                        invalidate_layout_map(cache_key)
+                    
+                    # Engage Hard Cognitive Escape for 3 steps
+                    hard_escape_until_step = step + 4
+                    log(f"🔒 [HARD COGNITIVE ESCAPE ENGAGED]: Cache shortcuts strictly blocked through step {hard_escape_until_step}. Forcing raw LLM inference.")
+                    consecutive_unchanged_count = 0
+
+                if total_unchanged_steps >= 5:
+                    log(f"❌ [HARD STUCK TERMINATION]: Test case spent {total_unchanged_steps} steps without altering browser URL or DOM layout. Marking case as INCOMPLETE/FAILED and skipping forward.")
+                    is_final = False
                     break
 
             # Determine final status with variations supported
@@ -1032,14 +1288,15 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
         # --- OUTSIDE WHILE LOOP: SCREENSHOT AND REPORTING ---
         timestamp_s = int(time.time())
         os.makedirs("screenshots", exist_ok=True)
-        screenshot_path = f"screenshots/run_{run_id}_step_{step}_{timestamp_s}.png"
+        sanitized_run_id = "".join([c if c.isalnum() or c in ['_', '-'] else '_' for c in run_id])
+        screenshot_path = f"screenshots/run_{sanitized_run_id}_step_{step}_{timestamp_s}.png"
 
         try:
             await page.screenshot(path=screenshot_path, full_page=True)
             log(f"✅ Visual execution proof saved cleanly to: {screenshot_path}")
             
             # Maintain a duplicate copy at run_{run_id}_final.png for UI reference
-            final_copy = f"screenshots/run_{run_id}_final.png"
+            final_copy = f"screenshots/run_{sanitized_run_id}_final.png"
             import shutil
             shutil.copy(screenshot_path, final_copy)
         except Exception as e_ss:
@@ -1048,8 +1305,12 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
 
         if is_final:
             log(f"🎉 SUCCESS: Concurrency run '{run_id}' form-filling execution milestone reached cleanly!")
+            from core.test_cache_manager import commit_pending_cache
+            commit_pending_cache()
         else:
             log(f"⚠️ WARNING: Concurrency run '{run_id}' completed without reaching the final milestone.")
+            from core.test_cache_manager import clear_pending_cache
+            clear_pending_cache()
 
         duration = round(time.time() - start_time, 2)
         
@@ -1078,28 +1339,20 @@ async def run_autonomous_navigator(config_registry, target_url, user_goal, run_i
             "status": "SUCCESS" if is_final else "FAILED/INCOMPLETE",
             "is_final": is_final,
             "duration_seconds": duration,
-            "screenshot_path": f"screenshots/run_{run_id}_final.png" if os.path.exists(f"screenshots/run_{run_id}_final.png") else None,
+            "screenshot_path": f"screenshots/run_{sanitized_run_id}_final.png" if os.path.exists(f"screenshots/run_{sanitized_run_id}_final.png") else None,
             "avg_llm_time": avg_llm,
             "avg_scrape_time": avg_scrape,
-            "telemetry_report": telemetry_report
+            "telemetry_report": telemetry_report,
+            "llm_times": llm_times,
+            "scrape_times": scrape_times
         }
 
-        # Brief, professional QA executive summary
-        log("\n==================================================")
-        log("📊 TEST SUITE EXECUTION SUMMARY")
-        log("==================================================")
-        log(f"Target Goal:           {user_goal}")
-        log(f"Total Steps Taken:     {step}")
-        log(f"Duration (seconds):    {duration}")
-        log(f"Status:                {summary['status']}")
-        log(f"Final State Reached:   {is_final}")
-        log("==================================================\n")
-        
-        log("\n" + telemetry_report + "\n")
-
+        log(f"🏁 [{run_id}] Execution Finished | Status: {summary['status']} | Steps: {step} | Duration: {duration}s | Avg LLM: {avg_llm:.2f}s | Avg Scrape: {avg_scrape:.2f}s")
         return summary
 
     except Exception as e:
+        from core.test_cache_manager import clear_pending_cache
+        clear_pending_cache()
         log(f"❌ Execution Exception Encountered: {e}")
         duration = round(time.time() - start_time, 2)
         return {

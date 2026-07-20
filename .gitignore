@@ -25,3 +25,5 @@ screenshots/
 # QA test run outputs
 outputs/
 
+# Local navigation state cache
+.testcache/

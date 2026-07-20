@@ -55,135 +55,228 @@ class BrowserHelper:
         if not self.page:
             return []
 
-        elements = await self.page.evaluate(r"""() => {
-            const isVisible = (el) => {
-                if (!el) return false;
-                // Strip out scripts, styles, SVGs, meta, and hidden iframe environments
-                if (el.closest('script, style, svg, meta, iframe')) {
-                    return false;
-                }
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden') {
-                    return false;
-                }
-                const isFormTag = el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA';
-                if (parseFloat(style.opacity || '1') === 0 && !isFormTag) {
-                    return false;
-                }
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) {
-                    if (el.tagName !== 'A' || !el.innerText.trim()) {
+        try:
+            elements = await self.page.evaluate(r"""() => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    // Strip out scripts, styles, SVGs, meta, and hidden iframe environments
+                    if (el.closest('script, style, svg, meta, iframe')) {
                         return false;
                     }
-                }
-                let parent = el.parentElement;
-                while (parent) {
-                    const parentStyle = window.getComputedStyle(parent);
-                    if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden') {
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden') {
                         return false;
                     }
-                    parent = parent.parentElement;
-                }
-                return true;
-            };
-
-            // Scrape form controls, links, menu items, headings, alerts and errors
-            const targetQuery = 'input, button, select, textarea, a, li, [role="button"], [role="checkbox"], [role="radio"], h1, h2, h3, .alert, .error, [class*="nav-item"], [class*="menu-item"]';
-            const nodes = Array.from(document.querySelectorAll(targetQuery)).filter(isVisible);
-
-            const cleanText = (str) => {
-                if (!str) return '';
-                let cleaned = str.replace(/[^\x20-\x7E]+/g, ' ');
-                cleaned = cleaned.replace(/<[0-9a-fA-F]+>|&[#\w\d]+;/g, '');
-                return cleaned.replace(/\s+/g, ' ').trim();
-            };
-
-            return nodes.map(el => {
-                const tag = el.tagName.toLowerCase();
-                
-                // Classify headings and alert boxes as semantic text markers
-                const isHeading = ['h1', 'h2', 'h3'].includes(tag);
-                const isAlertOrError = el.classList.contains('alert') || el.classList.contains('error') || 
-                                      (window.getComputedStyle(el).color === 'rgb(220, 53, 69)') ||
-                                      (el.innerText && (el.innerText.toLowerCase().includes('error') || el.innerText.toLowerCase().includes('invalid') || el.innerText.toLowerCase().includes('unable to')));
-                
-                if (isHeading || isAlertOrError) {
-                    return {
-                        tag: el.tagName,
-                        type: 'text_marker',
-                        text: cleanText(el.innerText) || null
-                    };
-                }
-
-                // Associate labeling texts to standard input elements
-                let labelText = '';
-                if (el.id) {
-                    const lbl = document.querySelector(`label[for="${el.id}"]`);
-                    if (lbl) labelText = cleanText(lbl.innerText);
-                }
-                if (!labelText && el.parentElement) {
+                    const isFormTag = el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA';
+                    if (parseFloat(style.opacity || '1') === 0 && !isFormTag) {
+                        return false;
+                    }
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) {
+                        if (el.tagName !== 'A' || !el.innerText.trim()) {
+                            return false;
+                        }
+                    }
                     let parent = el.parentElement;
-                    while (parent && parent.tagName !== 'BODY') {
-                        if (parent.tagName === 'LABEL') {
-                            labelText = cleanText(parent.innerText);
-                            break;
+                    while (parent) {
+                        const parentStyle = window.getComputedStyle(parent);
+                        if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden') {
+                            return false;
                         }
                         parent = parent.parentElement;
                     }
-                }
+                    return true;
+                };
 
-                // Determine dynamic selectors
-                let selector = el.id ? `#${el.id}` : el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : '';
-                if (!selector) {
-                    const text = cleanText(el.innerText);
-                    if (text && text.length > 0 && text.length < 60 && !text.includes('\n') && !text.includes('"')) {
+                const cleanText = (txt) => {
+                    return txt ? txt.replace(/\s+/g, ' ').trim() : '';
+                };
+
+                const getLabel = (el) => {
+                    if (el.id) {
+                        const label = document.querySelector(`label[for="${el.id}"]`);
+                        if (label && label.innerText) return cleanText(label.innerText);
+                    }
+                    const parentLabel = el.closest('label');
+                    if (parentLabel && parentLabel.innerText) return cleanText(parentLabel.innerText);
+                    
+                    let prev = el.previousElementSibling;
+                    while (prev) {
+                        if (prev.tagName === 'LABEL' && prev.innerText) return cleanText(prev.innerText);
+                        prev = prev.previousElementSibling;
+                    }
+                    return '';
+                };
+
+                const hasVisibleModal = () => {
+                    const modal = document.querySelector('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
+                    if (modal) {
+                        const rect = modal.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 && window.getComputedStyle(modal).display !== 'none';
+                    }
+                    return false;
+                };
+
+                const allElements = Array.from(document.querySelectorAll('input, select, textarea, button, a, [role="button"], [role="link"], [role="checkbox"], h1, h2, h3, h4, h5, h6, .alert-danger, .alert-error, .error-message, .error-text, [role="alert"]'));
+                
+                return allElements.map(el => {
+                    if (!isVisible(el)) return null;
+
+                    // Spatial container scoping: If modal is present, only discover elements inside it
+                    const hasModal = hasVisibleModal();
+                    const modalParent = el.closest('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
+                    if (hasModal && !modalParent) {
+                        return null; // Discard background element
+                    }
+
+                    const isHeader = /^H[1-6]$/.test(el.tagName);
+                    const isAlert = el.classList.contains('alert-danger') || el.classList.contains('alert-error') || el.classList.contains('error-message') || el.classList.contains('error-text') || el.getAttribute('role') === 'alert';
+                    
+                    if (isHeader || isAlert) {
+                        return {
+                            tag: el.tagName,
+                            type: isAlert ? 'alert_message' : 'text_marker',
+                            text: cleanText(el.innerText || ''),
+                            computed_selector: null
+                        };
+                    }
+
+                    const labelText = getLabel(el);
+                    
+                    let selector = null;
+                    const tagLower = el.tagName.toLowerCase();
+                    const text = cleanText(el.innerText || el.value || '');
+                    const navParent = el.closest('a, button, li, [role="menuitem"], [role="link"], .menu-item, .nav-item');
+
+                    if (el.id) {
+                        selector = `#${el.id}`;
+                    } else if (el.name) {
+                        selector = `${tagLower}[name="${el.name}"]`;
+                    } else if (tagLower === 'a' && text && text.length < 60 && !text.includes('\n')) {
+                        selector = `a:has-text("${text}")`;
+                    } else if (tagLower === 'button' && text && text.length < 60 && !text.includes('\n')) {
+                        selector = `button:has-text("${text}")`;
+                    } else if ((tagLower === 'li' || el.getAttribute('role') === 'menuitem') && text && text.length < 60 && !text.includes('\n')) {
+                        selector = `${tagLower}:has-text("${text}")`;
+                    } else if (navParent && text && text.length < 60 && !text.includes('\n')) {
+                        const parentTag = navParent.tagName.toLowerCase();
+                        if (parentTag === 'a') {
+                            selector = `a:has-text("${text}")`;
+                        } else if (parentTag === 'button') {
+                            selector = `button:has-text("${text}")`;
+                        } else if (parentTag === 'li') {
+                            selector = `li:has-text("${text}")`;
+                        } else {
+                            selector = `:is(a, button, li, [role="menuitem"]):has-text("${text}")`;
+                        }
+                    } else if (text && text.length < 50 && !text.includes('\n')) {
                         selector = `text="${text}"`;
                     } else if (el.type === 'submit' || el.className) {
                         const classClean = Array.from(el.classList).join('.');
-                        selector = classClean ? `${el.tagName.toLowerCase()}.${classClean}` : el.tagName.toLowerCase();
+                        selector = classClean ? `${tagLower}.${classClean}` : tagLower;
                     } else {
-                        selector = el.tagName.toLowerCase();
+                        selector = tagLower;
                     }
-                }
 
-                // Prepend modal container scope if inside a dynamic overlay to prevent pointer interception
-                const modalParent = el.closest('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
-                if (modalParent && selector && !selector.startsWith('#')) {
-                    selector = `.modal-container >> ${selector}`;
-                }
+                    // Prepend modal container scope if inside a dynamic overlay to prevent pointer interception
+                    if (modalParent && selector) {
+                        const classList = Array.from(modalParent.classList).filter(c => c && c.trim());
+                        const parentClass = classList.length > 0 ? '.' + classList.join('.') : '[class*="modal"]';
+                        selector = `${parentClass}:visible >> ${selector} >> visible=true`;
+                    } else if (selector) {
+                        const hasOverlay = !!document.querySelector('.modal-container, .modal, [class*="modal"], [class*="Modal"]');
+                        if (hasOverlay) {
+                            selector = `${selector} >> visible=true`;
+                        }
+                    }
 
-                let optionsList = [];
-                if (el.tagName === 'SELECT') {
-                    optionsList = Array.from(el.options).map(opt => ({
-                        text: cleanText(opt.text),
-                        value: opt.value
-                    }));
-                }
+                    let optionsList = [];
+                    if (el.tagName === 'SELECT') {
+                        optionsList = Array.from(el.options).map(opt => ({
+                            text: cleanText(opt.text),
+                            value: opt.value
+                        }));
+                    }
 
-                return {
-                    tag: el.tagName,
-                    id: el.id || null,
-                    name: el.name || null,
-                    label: labelText || null,
-                    type: el.type || el.getAttribute('role') || 'text',
-                    placeholder: cleanText(el.placeholder || el.getAttribute('aria-label') || '') || null,
-                    text: cleanText(el.innerText || el.value || '') || null,
-                    options: optionsList.length > 0 ? optionsList : null,
-                    disabled: el.disabled || false,
-                    computed_selector: selector
-                };
-            }).filter(item => {
-                if (item.type === 'text_marker') {
-                    return item.text && item.text.length > 0;
-                }
-                return item.id || item.text || item.placeholder || item.name || item.options || item.label;
-            });
-        }""")
-        return elements
+                    const rect = el.getBoundingClientRect();
+                    const isElVisible = rect.width > 0 && rect.height > 0 && el.offsetWidth > 0 && el.offsetHeight > 0;
+                    const visibilityHighlight = isElVisible ? "strictly_visible_in_active_viewport" : "hidden_or_collapsed";
+
+                    return {
+                        tag: el.tagName,
+                        id: el.id || null,
+                        name: el.name || null,
+                        label: labelText || null,
+                        type: el.type || el.getAttribute('role') || 'text',
+                        placeholder: cleanText(el.placeholder || el.getAttribute('aria-label') || '') || null,
+                        text: cleanText(el.innerText || el.value || '') || null,
+                        options: optionsList.length > 0 ? optionsList : null,
+                        disabled: el.disabled || false,
+                        computed_selector: selector,
+                        visibility_flag: visibilityHighlight
+                    };
+                }).filter(item => {
+                    if (!item) return false;
+                    if (item.type === 'text_marker' || item.type === 'alert_message') {
+                        return item.text && item.text.length > 0;
+                    }
+                    return item.id || item.text || item.placeholder || item.name || item.options || item.label || item.computed_selector;
+                });
+            }""")
+
+            # Post-process elements to disambiguate duplicate computed selectors with nth= indexes
+            selector_counts = {}
+            for el in elements:
+                sel = el.get("computed_selector")
+                if sel and not (el.get("type") in ["text_marker", "alert_message"]):
+                    selector_counts[sel] = selector_counts.get(sel, 0) + 1
+
+            selector_indices = {}
+            for el in elements:
+                sel = el.get("computed_selector")
+                if sel and not (el.get("type") in ["text_marker", "alert_message"]):
+                    if selector_counts[sel] > 1 and ">> nth=" not in sel:
+                        idx = selector_indices.get(sel, 0)
+                        el["computed_selector"] = f"{sel} >> nth={idx}"
+                        selector_indices[sel] = idx + 1
+
+            return elements
+        except Exception as e:
+            print(f"⚠️ [DOM SCRAPE BYPASS]: Exception during evaluate: {e}")
+            return []
 
     async def close_session(self):
         """Cleanly tears down the active automation context to prevent memory leaks."""
-        if self.page: await self.page.close()
-        if self.context: await self.context.close()
-        if self.browser: await self.browser.close()
-        if self.playwright: await self.playwright.stop()
+        try:
+            if self.page:
+                try:
+                    self.page.remove_listener("dialog", lambda dialog: None)
+                except Exception:
+                    pass
+                if not self.page.is_closed():
+                    await self.page.close()
+        except Exception as e:
+            print(f"⚠️ Exception during page cleanup: {e}")
+
+        try:
+            if self.context:
+                await self.context.close()
+        except Exception as e:
+            print(f"⚠️ Exception during context cleanup: {e}")
+
+        try:
+            if self.browser:
+                await self.browser.close()
+        except Exception as e:
+            print(f"⚠️ Exception during browser cleanup: {e}")
+
+        try:
+            if self.playwright:
+                await self.playwright.stop()
+        except Exception as e:
+            print(f"⚠️ Exception during playwright cleanup: {e}")
+            
+        self.page = None
+        self.context = None
+        self.browser = None
+        self.playwright = None

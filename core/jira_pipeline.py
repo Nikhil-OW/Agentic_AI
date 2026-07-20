@@ -24,170 +24,16 @@ if project_root not in sys.path:
 from core.agent import run_autonomous_navigator, load_unified_config
 from utils.browser_helper import BrowserHelper
 
-def call_gemini_with_retry(client, model, contents, config=None, max_attempts=5):
-    import re
-    import time
-    
-    # Introduce rate limiting sleep to avoid hitting immediate RPM limits
-    time.sleep(5.0)
-    
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config
-            )
-        except Exception as ex:
-            ex_str = str(ex)
-            is_rate_limit = any(term in ex_str for term in ["429", "RESOURCE_EXHAUSTED", "Quota exceeded"])
-            is_unavailable = any(term in ex_str for term in ["503", "UNAVAILABLE"])
-            
-            if is_rate_limit or is_unavailable:
-                if is_rate_limit:
-                    match = re.search(r'(?:retry in|retryDelay[\'\"\s:]+)([\d\.]+)', ex_str)
-                    if match:
-                        sleep_time = float(match.group(1)) + 5.0
-                    else:
-                        sleep_time = (2 ** attempt) * 10
-                    alert_msg = f"Gemini API 429 Exhausted"
-                else:
-                    sleep_time = 60.0
-                    alert_msg = f"Gemini API 503 Unavailable"
-                
-                print(f"[RATE LIMIT ALERT] {alert_msg}. Automatically sleeping for {sleep_time:.2f} seconds before retrying execution loop (Attempt {attempt}/{max_attempts})...")
-                time.sleep(sleep_time)
-            else:
-                raise ex
-    raise Exception(f"Gemini API Rate Limit or Availability attempts exhausted ({max_attempts} attempts).")
-
-
-def write_pipeline_failure_to_excel(excel_path: str, error_message: str):
-    import os
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill
-    
-    os.makedirs(os.path.dirname(excel_path), exist_ok=True)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Test Suite Matrix"
-    ws.views.sheetView[0].showGridLines = True
-    
-    headers = ["Test Case ID", "Component", "Description", "Execution Goal", "Expected Result", "Status", "Target URL", "Timestamp", "Screenshot Link", "Issue Type"]
-    ws.append(headers)
-    
-    ws.append([
-        "TC000_ERR",
-        "Pipeline",
-        "Pipeline execution failed during ingestion/generation phase.",
-        f"Error: {error_message}",
-        "Pipeline should complete successfully.",
-        "FAILED",
-        "N/A",
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "",
-        "N/A"
-    ])
-    
-    fail_fill = PatternFill(start_color="FCE5CD", end_color="FCE5CD", fill_type="solid")
-    fail_font = Font(name="Segoe UI", size=10, bold=True, color="A61C00")
-    for col in range(1, len(headers) + 1):
-        cell = ws.cell(row=2, column=col)
-        cell.font = fail_font
-        if col == 6:
-            cell.fill = fail_fill
-            
-    wb.save(excel_path)
-    print(f"💾 Saved pipeline failure details to {excel_path}")
-
-# ----------------------------------------------------
-# Pydantic Schemas for Gemini Structured JSON Outputs
-# ----------------------------------------------------
-class JiraStoryData(BaseModel):
-    title: str = Field(description="The summary or title of the Jira story/ticket.")
-    description: str = Field(description="The main description body of the story.")
-    acceptance_criteria: List[str] = Field(description="List of acceptance criteria extracted from the story.")
-    target_url: Optional[str] = Field(None, description="The test environment web application URL if mentioned in the story description.")
-    issue_type: Optional[str] = Field("User Story", description="The issue type of the ticket, e.g., User Story, Bug.")
-
-class TestCaseItem(BaseModel):
-    test_case_id: str = Field(description="Unique identifier, e.g. TC001, TC002.")
-    component: str = Field(description="The component area, e.g. Login, Authentication, Form submission, Validation.")
-    description: str = Field(description="Detailed explanation of what is being tested.")
-    execution_goal: str = Field(description="Specific, detailed natural language instructions telling our autonomous web agent exactly what to do step-by-step.")
-    expected_result: str = Field(description="Expected outcome or success indicator to check.")
-
-class TestSuiteOutput(BaseModel):
-    test_cases: List[TestCaseItem] = Field(description="The complete list of predicted test case scenarios.")
-
-
-# ----------------------------------------------------
-# 1. Jira Ingestion Layer
-# ----------------------------------------------------
-def generate_dynamic_synthetic_story() -> JiraStoryData:
-    import random
-    from faker import Faker
-    fake = Faker()
-    
-    # Try to load target_url from config
-    target_url = "https://dev.urbuddi.com/login"
-    try:
-        from core.agent import load_unified_config
-        config = load_unified_config()
-        target_url = config["environment"].get("target_url") or config["environment"].get("default_url") or target_url
-    except Exception:
-        pass
-
-    # System contexts/components
-    actions = [
-        "Authenticate and access dashboard",
-        "Submit transaction form",
-        "Update user profile settings",
-        "Apply monthly leave requests",
-        "Process payroll calculations",
-        "Generate analytics report summary",
-        "Configure notification preferences"
-    ]
-    
-    rules = [
-        "must validate all mandatory input fields and reject empty submissions",
-        "should handle boundary conditions and enforce numeric limits",
-        "must trigger security alerts on multiple validation failures",
-        "must show success notifications and redirect to active view URL",
-        "should calculate zero-state values correctly if inputs are missing"
-    ]
-    
-    triggers = [
-        "under high system load parameters",
-        "with dynamic synthetic credentials",
-        "within the configured session timeout period",
-        "across all responsive viewport configurations"
-    ]
-    
-    title_action = random.choice(actions)
-    title = f"Dynamic Verification: {title_action} on Target Application"
-    
-    description = (
-        f"As a QA verification system, I want to programmatically execute: {title_action.lower()} "
-        f"so that I can validate that the system behaves correctly under rules such as: '{random.choice(rules)}'. "
-        f"This test is run using randomly synthesized inputs {random.choice(triggers)}."
-    )
-    
-    num_ac = random.randint(3, 5)
-    ac_list = []
-    for i in range(num_ac):
-        ac_list.append(
-            f"Verify that performing action '{random.choice(actions).lower()}' "
-            f"results in: '{random.choice(rules)}' {random.choice(triggers)}."
-        )
-        
-    return JiraStoryData(
-        title=title,
-        description=description,
-        acceptance_criteria=ac_list,
-        target_url=target_url,
-        issue_type=random.choice(["User Story", "Bug"])
-    )
+from core.test_case_generator import (
+    JiraStoryData,
+    TestCaseItem,
+    TestSuiteOutput,
+    TestCaseGenerator,
+    generate_dynamic_synthetic_story,
+    write_pipeline_failure_to_excel,
+    safe_save_workbook,
+    call_gemini_with_retry
+)
 
 
 class JiraExtractor:
@@ -286,176 +132,32 @@ class JiraExtractor:
                 data = json.loads(response_gemini.text.strip())
                 if 'issue_type' not in data or not data['issue_type']:
                     data['issue_type'] = issue_type
-                print(f"🎯 JiraExtractor: Successfully parsed REST response: '{data.get('title')}'")
-                return JiraStoryData(**data)
+                
+                story_obj = JiraStoryData(**data)
+                print("\n======================================================================")
+                print("📋 BORDEREAU: HIGH-PRIORITY JIRA FEATURE CONTEXT INGESTED")
+                print("======================================================================")
+                print(f"   * [TARGET JIRA KEY] : {issue_key}")
+                print(f"   * [TICKET SUMMARY]  : {story_obj.title}")
+                print("   * [INGESTED CORPUS] : Full user story criteria mapped into generative context variables dynamically.")
+                print("======================================================================\n")
+                return story_obj
                 
         except Exception as ex:
             print(f"⚠️ JiraExtractor General Ingestion Error: {ex}. Bypassing browser fallback.")
             print("💡 JiraExtractor: Triggering Dynamic Random Synthetic Factory...")
-            return generate_dynamic_synthetic_story()
+            synth_story = generate_dynamic_synthetic_story()
+            print("\n======================================================================")
+            print("📋 BORDEREAU: HIGH-PRIORITY JIRA FEATURE CONTEXT INGESTED")
+            print("======================================================================")
+            print(f"   * [TARGET JIRA KEY] : {issue_key}")
+            print(f"   * [TICKET SUMMARY]  : {synth_story.title}")
+            print("   * [INGESTED CORPUS] : Full user story criteria mapped into generative context variables dynamically.")
+            print("======================================================================\n")
+            return synth_story
 
 
-# ----------------------------------------------------
-# 2. Predictive Test Case Scenario Generation Layer
-# ----------------------------------------------------
-class TestCaseGenerator:
-    """Generates test cases from Jira criteria and writes to Excel workbook."""
-    
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.client = genai.Client(api_key=api_key)
-
-    def generate_suite(self, story: JiraStoryData, target_url: Optional[str] = None) -> List[TestCaseItem]:
-        """Uses Gemini to predict scenarios based on story criteria."""
-        print("🧠 TestCaseGenerator: Invoking Gemini to generate test cases...")
-        
-        url_prompt_addition = ""
-        if target_url:
-            url_prompt_addition = f"\nAll test cases must be designed to be executed starting from this baseline URL: {target_url}\n"
-            
-        try:
-            config = load_unified_config()
-            test_data = config.get("test_data", {})
-            config_user = test_data.get("username", "")
-            config_pass = test_data.get("password", "")
-            if config_user and config_pass:
-                url_prompt_addition += f"\nFor any authentication scenario, prioritize using these credentials: Username: {config_user}, Password: {config_pass}. Do not generate synthetic placeholders.\n"
-        except Exception:
-            pass
-            
-        issue_type = story.issue_type or "User Story"
-        if issue_type.lower() == "bug":
-            type_prompt_addition = (
-                "\nThis issue is identified as a 'Bug'. Prioritize targeted edge-case verification, "
-                "regression tests, and validation of the fix to ensure the defect is resolved.\n"
-            )
-        else:
-            type_prompt_addition = (
-                "\nThis issue is identified as a 'User Story'. Focus on functional acceptance criteria "
-                "and happy path validation.\n"
-            )
-
-        prompt = (
-            "You are a Senior Principal QA Engineer. Analyse the following Jira User Story details:\n"
-            f"Title: {story.title}\n"
-            f"Description: {story.description}\n"
-            f"Acceptance Criteria:\n" + "\n".join(f"- {ac}" for ac in story.acceptance_criteria) + "\n\n"
-            f"{url_prompt_addition}"
-            f"{type_prompt_addition}"
-            "Predict and generate a comprehensive suite of logical test case scenarios. "
-            "You must include:\n"
-            "1. Happy path (successful authentication/execution).\n"
-            "2. Negative validations (e.g. invalid password, empty credentials, etc.).\n"
-            "3. Boundary cases (if any apply to fields, otherwise structural variations).\n\n"
-            "Return the list of test cases matching the structured schema."
-        )
-
-        response = call_gemini_with_retry(
-            client=self.client,
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=TestSuiteOutput,
-            )
-        )
-        
-        suite = json.loads(response.text.strip())
-        cases = [TestCaseItem(**c) for c in suite.get("test_cases", [])]
-        print(f"📊 TestCaseGenerator: Generated {len(cases)} test cases.")
-        return cases
-
-    def write_to_excel(self, cases: List[TestCaseItem], default_url: str, output_path: str = "outputs/test_suite.xlsx", issue_type: str = "User Story"):
-        """Saves generated test cases into a highly polished, formatted Excel workbook."""
-        if not os.path.isabs(output_path):
-            output_path = os.path.join(project_root, output_path)
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Test Suite Matrix"
-        
-        # Enable grid lines
-        ws.views.sheetView[0].showGridLines = True
-        
-        # Styling definitions
-        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-        cell_font = Font(name="Segoe UI", size=10)
-        bold_font = Font(name="Segoe UI", size=10, bold=True)
-        alignment_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        alignment_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-        
-        thin_border = Border(
-            left=Side(style='thin', color='D9D9D9'),
-            right=Side(style='thin', color='D9D9D9'),
-            top=Side(style='thin', color='D9D9D9'),
-            bottom=Side(style='thin', color='D9D9D9')
-        )
-        
-        headers = ["Test Case ID", "Component", "Description", "Execution Goal", "Expected Result", "Status", "Target URL", "Timestamp", "Screenshot Link", "Issue Type"]
-        ws.append(headers)
-        
-        # Style headers
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = alignment_center
-            cell.border = thin_border
-            
-        # Append data
-        for case in cases:
-            ws.append([
-                case.test_case_id,
-                case.component,
-                case.description,
-                case.execution_goal,
-                case.expected_result,
-                "Pending",
-                default_url,
-                "",
-                "",
-                issue_type
-            ])
-            
-        # Style rows and set border
-        for row in range(2, len(cases) + 2):
-            for col in range(1, len(headers) + 1):
-                cell = ws.cell(row=row, column=col)
-                cell.font = cell_font
-                cell.border = thin_border
-                if col in [1, 2, 6, 8, 10]:
-                    cell.alignment = alignment_center
-                else:
-                    cell.alignment = alignment_left
-                
-                # Format Pending status cell
-                if col == 6:
-                    cell.font = bold_font
-                    cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # Light yellow
-                    
-        # Adjust column widths
-        column_widths = {
-            "A": 15,  # Test Case ID
-            "B": 15,  # Component
-            "C": 35,  # Description
-            "D": 50,  # Execution Goal
-            "E": 35,  # Expected Result
-            "F": 12,  # Status
-            "G": 30,  # Target URL
-            "H": 20,  # Timestamp
-            "I": 25,  # Screenshot Link
-            "J": 15   # Issue Type
-        }
-        for col, width in column_widths.items():
-            ws.column_dimensions[col].width = width
-            
-        # Freeze top row
-        ws.freeze_panes = "A2"
-        
-        wb.save(output_path)
-        print(f"💾 TestCaseGenerator: Saved workbook to {output_path}")
+# TestCaseGenerator is imported from core.test_case_generator
 
 
 # ----------------------------------------------------
@@ -509,36 +211,55 @@ class PipelineOrchestrator:
             print("[PIPELINE NOTIFICATION] Running in isolated sample verification mode. Only the primary scenario will be processed.")
             rows_to_run = rows_to_run[:1]
             
-        has_failed = False
+        suite_llm_times = []
+        suite_scrape_times = []
+
+        # Remove global cascading skip logic, process each test case independently
         for row in rows_to_run:
             case_id = ws.cell(row=row, column=id_col).value
             goal = ws.cell(row=row, column=goal_col).value
-            # Force browser window to navigate exclusively to target URL override
+            desc = ws.cell(row=row, column=col_indices.get("Description") or 3).value or ""
             target_url = self.config["environment"].get("target_url") or ws.cell(row=row, column=url_col).value
             
-            if has_failed:
-                print(f"⏭️ Skipping [{case_id}] because an upstream prerequisite scenario has failed.")
-                status_cell = ws.cell(row=row, column=status_col)
-                status_cell.value = "SKIPPED"
-                status_cell.fill = skip_fill
-                status_cell.font = skip_font
-                ws.cell(row=row, column=time_col).value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                wb.save(excel_path)
-                continue
-                
+            # Prerequisite Check
+            import re
+            prereq_match = re.search(r'(?:prerequisite|depends on|requires)\s*[:\-]?\s*(tc\d+)', (goal or "").lower() + " " + (desc or "").lower())
+            if prereq_match:
+                prereq_id = prereq_match.group(1).upper()
+                prereq_failed = False
+                for r in range(2, row):
+                    other_id = ws.cell(row=r, column=id_col).value
+                    if other_id and other_id.upper() == prereq_id:
+                        other_status = ws.cell(row=r, column=status_col).value
+                        if other_status in ["FAILED", "SKIPPED"]:
+                            prereq_failed = True
+                            break
+                if prereq_failed:
+                    print(f"⏭️ Skipping [{case_id}] because an explicit prerequisite scenario '{prereq_id}' has failed/skipped.")
+                    status_cell = ws.cell(row=row, column=status_col)
+                    status_cell.value = "SKIPPED"
+                    status_cell.fill = skip_fill
+                    status_cell.font = skip_font
+                    ws.cell(row=row, column=time_col).value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    safe_save_workbook(wb, excel_path)
+                    continue
+
             print(f"\n⚡ Executing [{case_id}]: {goal[:80]}...")
             
             # Mark cell as Executing
             ws.cell(row=row, column=status_col).value = "Running"
             ws.cell(row=row, column=status_col).fill = PatternFill(start_color="CFE2F3", end_color="CFE2F3", fill_type="solid") # Light blue
-            wb.save(excel_path)
+            safe_save_workbook(wb, excel_path)
             
             # Execute through core agent
-            run_id = f"pipeline_{case_id.lower()}"
+            component_val = ws.cell(row=row, column=col_indices.get("Component") or 2).value or "QA Run"
+            run_id = f"pipeline_{case_id.lower()} - {case_id}: {component_val}"
             try:
                 # Respect CLI browser mode override if defined
                 if "headless" not in self.config["environment"]:
                     self.config["environment"]["headless"] = True
+                
+                # Execute in an isolated try-except block
                 summary = await run_autonomous_navigator(
                     config_registry=self.config,
                     target_url=target_url,
@@ -546,11 +267,14 @@ class PipelineOrchestrator:
                     run_id=run_id
                 )
                 
+                if summary.get("llm_times"):
+                    suite_llm_times.extend(summary.get("llm_times"))
+                if summary.get("scrape_times"):
+                    suite_scrape_times.extend(summary.get("scrape_times"))
+                
                 # Determine outcome
                 is_passed = summary.get("is_final") and summary.get("status") == "SUCCESS"
                 status_str = "PASSED" if is_passed else "FAILED"
-                if not is_passed:
-                    has_failed = True
                 
                 # Write results
                 status_cell = ws.cell(row=row, column=status_col)
@@ -569,12 +293,11 @@ class PipelineOrchestrator:
                 if ss_path and os.path.exists(ss_path):
                     # Store screenshot relative or absolute link
                     rel_ss_path = os.path.relpath(ss_path, os.path.dirname(excel_path))
-                    ws.cell(row=row, column=ss_col).value = f'=HYPERLINK("{rel_ss_path}", "View Screenshot")'
+                    ws.cell(row=row, column=ss_col).value = rel_ss_path.replace("\\", "/")
                     ws.cell(row=row, column=ss_col).font = Font(name="Segoe UI", size=10, underline="single", color="1155CC")
                 
             except Exception as run_ex:
                 print(f"❌ PipelineOrchestrator Execution Crash on {case_id}: {run_ex}")
-                has_failed = True
                 status_cell = ws.cell(row=row, column=status_col)
                 status_cell.value = "FAILED"
                 status_cell.fill = fail_fill
@@ -582,10 +305,52 @@ class PipelineOrchestrator:
                 ws.cell(row=row, column=time_col).value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             # Incremental save
-            wb.save(excel_path)
+            safe_save_workbook(wb, excel_path)
             print(f"💾 Saved updates for [{case_id}] | Status: {ws.cell(row=row, column=status_col).value}")
             
         print("\n🏁 Sequential test suite execution loop concluded.")
+        
+        # Calculate final metrics for the telemetry report
+        total_generated = max_row - 1
+        total_executed = len(rows_to_run)
+        passed_count = 0
+        failed_count = 0
+        skipped_count = 0
+        
+        for r in range(2, max_row + 1):
+            status = ws.cell(row=r, column=status_col).value
+            if status == "PASSED":
+                passed_count += 1
+            elif status in ["FAILED", "Running"]:
+                failed_count += 1
+            elif status == "SKIPPED":
+                skipped_count += 1
+
+        import sys
+        if hasattr(sys.stdout, 'flush'):
+            sys.stdout.flush()
+                
+        print("\n======================================================================")
+        print("📊 EXECUTION METRICS SUMMARY REPORT")
+        print("======================================================================")
+        print(f"Total Test Cases Generated: {total_generated}")
+        print(f"Total Test Cases Executed:  {total_executed}")
+        print(f"Passed: {passed_count} | Failed: {failed_count} | Skipped: {skipped_count}")
+        print("======================================================================")
+
+        if suite_llm_times and suite_scrape_times:
+            avg_llm = sum(suite_llm_times) / len(suite_llm_times)
+            avg_scrape = sum(suite_scrape_times) / len(suite_scrape_times)
+            ratio = avg_llm / avg_scrape if avg_scrape > 0 else 0
+            print("\n==================================================")
+            print("📊 AGENTIC PERFORMANCE TELEMETRY REPORT")
+            print("==================================================")
+            print(f"Average AI Inference Latency:   {avg_llm:.2f}s / step")
+            print(f"Average DOM Scrape Latency:     {avg_scrape:.2f}s / step")
+            print(f"Total AI Reasonings:            {len(suite_llm_times)}")
+            print(f"Total DOM Scrapes:              {len(suite_scrape_times)}")
+            print(f"Average Latency Ratio (AI/Sys): {ratio:.1f}x")
+            print("==================================================\n")
 
 
 # ----------------------------------------------------
@@ -642,8 +407,10 @@ class ReportCompiler:
                         ss_url = match.group(1)
                 except Exception:
                     pass
+            else:
+                ss_url = str(ss_formula)
             
-            row_dict["parsed_screenshot"] = ss_url
+            row_dict["parsed_screenshot"] = ss_url.replace("\\", "/")
             rows_data.append(row_dict)
             
         pass_rate = round((passed / total) * 100, 1) if total > 0 else 0.0
@@ -1167,6 +934,16 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_r
     print("🎬 STARTING COMPLETE AUTONOMOUS QA PIPELINE RUN")
     print("==================================================")
     
+    import re
+    from core.test_cache_manager import check_and_init_cache
+    jira_key = "DUMMY"
+    if jira_url:
+        match = re.search(r"([a-zA-Z0-9]+-\d+)", jira_url, re.IGNORECASE)
+        if match:
+            jira_key = match.group(1).upper()
+    check_and_init_cache(jira_key)
+    print(f"🔑 Active JIRA Key resolved: {jira_key}")
+
     if not os.path.isabs(output_dir):
         output_dir = os.path.join(project_root, output_dir)
     
@@ -1180,6 +957,11 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_r
     excel_path = os.path.join(output_dir, "test_suite.xlsx")
     html_path = os.path.join(output_dir, "dashboard.html")
     
+    import time
+    pipeline_start_time = time.perf_counter()
+    gen_duration = 0.0
+    exec_duration = 0.0
+
     try:
         # STEP 1: Ingest Jira story details
         extractor = JiraExtractor(api_key=api_key)
@@ -1190,14 +972,17 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_r
         config["environment"]["target_url"] = testing_url
         
         # STEP 2: Generate test cases and save to Excel workbook
+        gen_start_time = time.perf_counter()
         generator = TestCaseGenerator(api_key=api_key)
         test_cases = generator.generate_suite(story_data, target_url=testing_url)
-        
         generator.write_to_excel(test_cases, default_url=testing_url, output_path=excel_path, issue_type=story_data.issue_type or "User Story")
+        gen_duration = time.perf_counter() - gen_start_time
         
         # STEP 3: Sequentially execute test scenarios and record live results
+        exec_start_time = time.perf_counter()
         orchestrator = PipelineOrchestrator(config_registry=config)
         await orchestrator.execute_suite(excel_path=excel_path, sample_run=sample_run)
+        exec_duration = time.perf_counter() - exec_start_time
         
     except Exception as pipeline_ex:
         print(f"❌ Gracefully handling pipeline failure: {pipeline_ex}")
@@ -1209,7 +994,17 @@ async def run_full_pipeline(jira_url: str, output_dir: str = "outputs", sample_r
     except Exception as html_ex:
         print(f"⚠️ Failed to compile HTML dashboard: {html_ex}")
         
-    print("\n==================================================")
+    total_duration = time.perf_counter() - pipeline_start_time
+
+    print("\n======================================================================")
+    print("⏱️ UNIFIED PIPELINE TIME TELEMETRY REPORT")
+    print("======================================================================")
+    print(f"* Test Case Generation Phase Time : {gen_duration:.2f} seconds")
+    print(f"* Test Case Execution Phase Time  : {exec_duration:.2f} seconds")
+    print(f"* Absolute Overall Pipeline Time  : {total_duration:.2f} seconds")
+    print("======================================================================\n")
+
+    print("==================================================")
     print("🎉 FULL PIPELINE COMPLETED SUCCESSFULLY!")
     print(f"📊 Excel Suite Matrix: {excel_path}")
     print(f"💻 HTML Dashboard:     {html_path}")
