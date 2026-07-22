@@ -337,3 +337,14 @@ def save_application_knowledge(knowledge_list: list[str]):
             json.dump(knowledge_list, f, indent=2)
     except Exception as e:
         print(f"⚠️ Failed to write application knowledge file: {e}")
+
+def append_application_knowledge(insight_desc: str):
+    """Appends unique natural language insights into persistent application_knowledge.json."""
+    if not insight_desc or not str(insight_desc).strip():
+        return
+    knowledge = load_application_knowledge()
+    clean_desc = str(insight_desc).strip()
+    if clean_desc not in knowledge:
+        knowledge.append(clean_desc)
+        save_application_knowledge(knowledge)
+        print(f"💾 [PERSISTENT KNOWLEDGE STORED]: '{clean_desc}'")

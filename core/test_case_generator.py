@@ -122,6 +122,7 @@ class JiraStoryData(BaseModel):
     acceptance_criteria: List[str] = Field(description="List of acceptance criteria extracted from the story.")
     target_url: Optional[str] = Field(None, description="The test environment web application URL if mentioned in the story description.")
     issue_type: Optional[str] = Field("User Story", description="The issue type of the ticket, e.g., User Story, Bug.")
+    domain_insights: Optional[List[str]] = Field(default=[], description="List of systemic domain rules, application behavioral rules, selector tips, or pathing hints extracted from comments, change logs, and attachment notes.")
 
 
 class TestCaseItem(BaseModel):
@@ -195,7 +196,10 @@ def generate_dynamic_synthetic_story() -> JiraStoryData:
         description=description,
         acceptance_criteria=ac_list,
         target_url=target_url,
-        issue_type="User Story"
+        issue_type="User Story",
+        domain_insights=[
+            "Note: Extra work needs to be applied under the Reimbursement tab instead of Leave Management."
+        ]
     )
 
 
