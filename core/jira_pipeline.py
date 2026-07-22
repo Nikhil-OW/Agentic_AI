@@ -89,14 +89,14 @@ class JiraExtractor:
             "Accept": "application/json"
         }
         
-        # Hit the v2 endpoint to get description as text/markdown instead of ADF JSON
-        api_url = f"https://{domain}/rest/api/2/issue/{issue_key}"
+        # Hit the v2 endpoint expanding comments, attachments, and changelog history
+        api_url = f"https://{domain}/rest/api/2/issue/{issue_key}?expand=renderedFields,names,schema,operations,editmeta,changelog,comments"
         req = urllib.request.Request(api_url, headers=headers)
         
         try:
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=12) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
-                print("✅ JiraExtractor: REST API request succeeded. Parsing payload via Gemini...")
+                print("✅ JiraExtractor: REST API multi-source request succeeded. Extracting comments & attachments...")
                 
                 fields = res_data.get('fields', {})
                 summary = fields.get('summary', '')
@@ -107,16 +107,58 @@ class JiraExtractor:
                     print("💡 [JIRA FALLBACK ACTIVE]: Description empty. Utilizing Ticket Summary text instead.")
                     fields['description'] = summary
                     description = summary
-                
-                # Print exact text payload ingested
-                print(f"📋 [JIRA TEXT INGESTED]: {description}")
+
+                # 1. Pull comments corpus
+                comments_corpus = []
+                raw_comments = fields.get('comment', {}).get('comments', [])
+                for c in raw_comments:
+                    c_body = c.get('body', '')
+                    c_author = c.get('author', {}).get('displayName', 'Team Member')
+                    if c_body:
+                        comments_corpus.append(f"[{c_author}]: {c_body}")
+
+                # 2. Pull attachments metadata & text content
+                attachments_corpus = []
+                raw_attachments = fields.get('attachment', [])
+                for att in raw_attachments:
+                    att_filename = att.get('filename', '')
+                    att_content_url = att.get('content', '')
+                    att_mime = att.get('mimeType', '')
+                    attachments_corpus.append(f"Attachment: {att_filename} ({att_mime})")
+                    if any(txt in att_mime.lower() for txt in ['text', 'json', 'csv', 'markdown', 'plain']):
+                        try:
+                            att_req = urllib.request.Request(att_content_url, headers=headers)
+                            with urllib.request.urlopen(att_req, timeout=5) as att_res:
+                                att_text = att_res.read().decode('utf-8', errors='ignore')
+                                attachments_corpus.append(f"Content of {att_filename}:\n{att_text[:2000]}")
+                        except Exception:
+                            pass
+
+                # 3. Pull changelog history
+                changelog_corpus = []
+                raw_changelog = res_data.get('changelog', {}).get('histories', [])
+                for h in raw_changelog:
+                    h_author = h.get('author', {}).get('displayName', 'System')
+                    items = [f"{item.get('field')}: {item.get('fromString')} -> {item.get('toString')}" for item in h.get('items', [])]
+                    if items:
+                        changelog_corpus.append(f"[{h_author}]: {', '.join(items)}")
+
+                print(f"📋 [MULTI-SOURCE INGESTION]: Captured {len(comments_corpus)} comments, {len(attachments_corpus)} attachments, {len(changelog_corpus)} history logs.")
                 
                 prompt = (
-                    "You are an AI Jira business analyst. We have fetched the following Jira ticket JSON payload from the REST API:\n\n"
-                    f"--- TICKET JSON PAYLOAD ---\n{json.dumps(res_data.get('fields', {}), indent=2)[:10000]}\n\n"
-                    "Extract the user story Title (summary), Description, and Acceptance Criteria (AC). "
-                    "Also extract the target web application testing environment URL if found in any field.\n"
-                    "Structure the output matching the requested JSON schema."
+                    "You are an AI Jira business analyst. We have fetched the following multi-source Jira ticket payload from the REST API:\n\n"
+                    f"--- TICKET SUMMARY & DESCRIPTION ---\nSummary: {summary}\nDescription: {description}\n\n"
+                    f"--- DEVELOPER/QA COMMENTS THREADS ---\n{json.dumps(comments_corpus, indent=2)}\n\n"
+                    f"--- ATTACHMENTS METADATA & TEXT CONTENT ---\n{json.dumps(attachments_corpus, indent=2)}\n\n"
+                    f"--- ISSUE CHANGELOG HISTORY ---\n{json.dumps(changelog_corpus, indent=2)}\n\n"
+                    "Extract:\n"
+                    "1. Title (summary)\n"
+                    "2. Description\n"
+                    "3. Acceptance Criteria (AC list)\n"
+                    "4. Target URL (if present)\n"
+                    "5. Issue Type\n"
+                    "6. Domain Insights: Systemic domain rules, application behavioral rules (e.g. 'Note: Extra work needs to be applied under the Reimbursement tab instead of Leave Management'), reusable selector tips, pathing hints, or known environment bugs documented in comments/attachments/description. Output each rule as a clear natural language statement.\n"
+                    "Structure output strictly matching requested JSON schema."
                 )
                 
                 response_gemini = call_gemini_with_retry(
@@ -134,19 +176,33 @@ class JiraExtractor:
                     data['issue_type'] = issue_type
                 
                 story_obj = JiraStoryData(**data)
+
+                # Persist extracted domain insights to persistent application_knowledge.json
+                from core.test_cache_manager import append_application_knowledge
+                if story_obj.domain_insights:
+                    for insight in story_obj.domain_insights:
+                        append_application_knowledge(insight)
+                    print(f"💡 [PERSISTENT KNOWLEDGE STORED]: Accumulated {len(story_obj.domain_insights)} insight(s) into '.testcache/application_knowledge.json'")
+
                 print("\n======================================================================")
                 print("📋 BORDEREAU: HIGH-PRIORITY JIRA FEATURE CONTEXT INGESTED")
                 print("======================================================================")
                 print(f"   * [TARGET JIRA KEY] : {issue_key}")
                 print(f"   * [TICKET SUMMARY]  : {story_obj.title}")
-                print("   * [INGESTED CORPUS] : Full user story criteria mapped into generative context variables dynamically.")
+                print("   * [INGESTED CORPUS] : Full user story, comments, and attachments mapped into generative context dynamically.")
                 print("======================================================================\n")
                 return story_obj
                 
         except Exception as ex:
-            print(f"⚠️ JiraExtractor General Ingestion Error: {ex}. Bypassing browser fallback.")
+            print(f"⚠️ JiraExtractor General Ingestion Error: {ex}. Bypassing REST fallback.")
             print("💡 JiraExtractor: Triggering Dynamic Random Synthetic Factory...")
             synth_story = generate_dynamic_synthetic_story()
+
+            from core.test_cache_manager import append_application_knowledge
+            if synth_story.domain_insights:
+                for insight in synth_story.domain_insights:
+                    append_application_knowledge(insight)
+
             print("\n======================================================================")
             print("📋 BORDEREAU: HIGH-PRIORITY JIRA FEATURE CONTEXT INGESTED")
             print("======================================================================")
